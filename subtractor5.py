@@ -138,8 +138,8 @@ while(1):
     #keypoints = detector.detect(stablergb)
     #blobs = cv2.drawKeypoints(stablergb, keypoints, numpy.array([]), (0,0,255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
-    cv2.imshow('frame', stablergb)
-    #cv2.imshow('frame', stablecgray)
+    #cv2.imshow('frame', stablergb)
+    cv2.imshow('frame', stablecgray)
     #cv2.imshow('frame', composite)
 
     #writer.write(composite)

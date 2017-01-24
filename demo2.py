@@ -198,8 +198,8 @@ def main():
 			#cv2.imshow(WINNAME, color1)
 			#key = cv2.waitKey(0)
 
-		#cv2.imshow(WINNAME, contlines)
-		#key = cv2.waitKey(0)
+		cv2.imshow(WINNAME, contlines)
+		key = cv2.waitKey(0)
 
 		src = numpy.array([(3, 3), (4, 3), (4, 4), (3, 4)], dtype=numpy.float32)
 		allboards = numpy.copy(color2)

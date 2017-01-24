@@ -1,0 +1,12 @@
+The board gets detected by cv2.findChessboardCorners only when there are no occlusions.
+I should find squares myself, as in demo2.py.
+Then use simulated annealing with sklearn to find the transform where those corners match with an idealized board in 3D.
+The points should be taken modulus the square size, so that it doesn't matter which square they end up on, so long as they are near a corner.
+The idealized board only needs one black/white corner and one white/black corner.
+
+Once the board has been located, MSER can track it.
+
+subtractor5.py has a good, clean image in "stablec" or "stablecgray".
+That image should be compared with speculated positions
+
+
