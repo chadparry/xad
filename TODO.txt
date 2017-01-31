@@ -1,8 +1,10 @@
 The board gets detected by cv2.findChessboardCorners only when there are no occlusions.
 I should find squares myself, as in demo2.py.
-Then use simulated annealing with sklearn to find the transform where those corners match with an idealized board in 3D.
-The points should be taken modulus the square size, so that it doesn't matter which square they end up on, so long as they are near a corner.
-The idealized board only needs one black/white corner and one white/black corner.
+RANSAC should find outliers.
+On each RANSAC iteration, a subset of points will be chosen.
+A rotation vector will be chosen and improved using least-squares minimization, as in solvePnP.
+The quad contours will be projected onto an idealized chessboard.
+Distance will be calculated to the nearest square of the correct color.
 
 Once the board has been located, MSER can track it.
 

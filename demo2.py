@@ -140,7 +140,9 @@ def main():
 		contours = contoursd + contourse
 
 		good = []
-		for contour in contours:
+		goodd = []
+		goode = []
+		for (idx, contour) in enumerate(contours):
 			perimeter = cv2.arcLength(contour, True)
 			if len(contour) > 4:
 				approx = cv2.approxPolyDP(contour, perimeter/20, True)
@@ -179,16 +181,28 @@ def main():
 			if len(contoursa1) != 4:
 				contoursa1 = approx
 
+			# FIXME: Find sub-pixel position of these corners.
+
 			good.append(contoursa1)
+			if idx < len(contoursd):
+				goodd.append(contoursa1)
+			else:
+				goode.append(contoursa1)
 
 		contcorners = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
 		contlines = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
-		for contour in reversed(good):
+		contlinesd = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
+		contlinese = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
+		for (idx, contour) in reversed(list(enumerate(good))):
 			#color = [a*256 for a in colorsys.hsv_to_rgb(random.random(), 0.75, 1)]
 			color = (255, 0, 0)
 			#cv2.drawContours(color1, [contour], -1, color, cv2.FILLED)
 			cv2.drawContours(color1, [contour], -1, color, 2)
 			cv2.drawContours(contlines, [contour], -1, 255, 1)
+			if idx < len(goodd):
+				cv2.drawContours(contlinesd, [contour], -1, 255, 1)
+			else:
+				cv2.drawContours(contlinese, [contour], -1, 255, 1)
 			for cr in contour:
 				if contcorners[(cr[0][1], cr[0][0])]:
 					#print('clobbered corner')
@@ -198,8 +212,12 @@ def main():
 			#cv2.imshow(WINNAME, color1)
 			#key = cv2.waitKey(0)
 
-		cv2.imshow(WINNAME, contlines)
-		key = cv2.waitKey(0)
+		#cv2.imshow(WINNAME, contlinesd)
+		#key = cv2.waitKey(0)
+		#cv2.imshow(WINNAME, contlinese)
+		#key = cv2.waitKey(0)
+		#cv2.imshow(WINNAME, contlines)
+		#key = cv2.waitKey(0)
 
 		src = numpy.array([(3, 3), (4, 3), (4, 4), (3, 4)], dtype=numpy.float32)
 		allboards = numpy.copy(color2)
@@ -236,7 +254,7 @@ def main():
 		#X, labels_true = sklearn.datasets.samples_generator.make_blobs(n_samples=20, centers=centers, cluster_std=0.4, random_state=0)
 		#print('X', X)
 		matrices = numpy.array(matrices)
-		#print('matrices', matrices)
+		print('matrices', matrices)
 
 		SHEAR_FACTOR = 1
 		ROTATION_FACTOR = 1
@@ -258,15 +276,15 @@ def main():
 				zip(decompose_matrix(a), decompose_matrix(b))))
 
 		## Use k-NN or DBSCAN on every perspective matrix to find the most likely matrix
-		#scanner = sklearn.cluster.DBSCAN(eps=50, min_samples=4, metric=pers_dist)
-		##db = scanner.fit(X)
-		#db = scanner.fit(matrices)
-		##core_samples_mask = np.zeros_like(db.labels_, dtype=bool)
-		##core_samples_mask[db.core_sample_indices_] = True
-		#print('kept', len(db.core_sample_indices_), len(matrices))
-		
+		scanner = sklearn.cluster.DBSCAN(eps=50, min_samples=4, metric=pers_dist)
+		#db = scanner.fit(X)
+		db = scanner.fit(matrices)
+		#core_samples_mask = np.zeros_like(db.labels_, dtype=bool)
+		#core_samples_mask[db.core_sample_indices_] = True
+		print('kept', len(db.core_sample_indices_), len(matrices))
+
 		for cidx, contour in enumerate(reversed(good)):
-			break
+			#break
 
 			if cidx not in db.core_sample_indices_:
 				continue
@@ -453,13 +471,13 @@ def main():
 	#color2partial = cv2.bitwise_and(color2, invmask)
 	#overlay = cv2.bitwise_or(color2partial, warpedpartial)
 
-	cv2.imshow(WINNAME, overlay)
-	key = cv2.waitKey(0)
+	#cv2.imshow(WINNAME, overlay)
+	#key = cv2.waitKey(0)
 
 	idealized = cv2.warpPerspective(color3, M, (refimg.shape[1], refimg.shape[0]),
 		flags=cv2.WARP_INVERSE_MAP)
-	cv2.imshow(WINNAME, idealized)
-	key = cv2.waitKey(0)
+	#cv2.imshow(WINNAME, idealized)
+	#key = cv2.waitKey(0)
 
 	return
 
