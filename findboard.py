@@ -8,8 +8,7 @@ import numpy
 import random
 import skimage.measure
 import skimage.transform
-import sklearn.cluster
-import sklearn.datasets.samples_generator
+import sklearn.linear_model
 
 
 WINNAME = 'Chess Transcription'
@@ -43,8 +42,8 @@ def main():
 		color2 = cv2.imread('chessboard_ready_for_calibration-sm.jpg')
 
 	img2 = cv2.cvtColor(color2, cv2.COLOR_BGR2GRAY)
-	cv2.imshow(WINNAME, color2)
-	key = cv2.waitKey(0)
+	#cv2.imshow(WINNAME, color2)
+	#key = cv2.waitKey(0)
 
 	refimg = cv2.cvtColor(refimgbw, cv2.COLOR_GRAY2BGR)
 	#cv2.imshow(WINNAME, refimg)
@@ -159,8 +158,8 @@ def main():
 	#key = cv2.waitKey(0)
 	#cv2.imshow(WINNAME, contlinese)
 	#key = cv2.waitKey(0)
-	#cv2.imshow(WINNAME, contlines)
-	#key = cv2.waitKey(0)
+	cv2.imshow(WINNAME, contlines)
+	key = cv2.waitKey(0)
 
 
 
@@ -213,41 +212,18 @@ def main():
 	img_pts = numpy.array([[p[0] for p in dst_pts]])
 	#print(img_pts)
 	h, w = color2.shape[:2]
-	ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(obj_pts, img_pts, (h, w), None, None)
-	newcameramtx, roi=cv2.getOptimalNewCameraMatrix(mtx,dist,(w,h),1,(w,h))
 	#print('mtx', mtx)
 	#print('newmtx', newcameramtx)
 
 	f = max(w, h)
 	default_mtx = numpy.array([[f, 0, w/2], [0, f, h/2], [0, 0, 1]]).astype('float32')
 
-	rvec = rvecs[0]
-	tvec = tvecs[0]
 	#ret, rvec, tvec = cv2.solvePnP(obj_pts, img_pts, mtx, dist)
 	#ret, rvec, tvec = cv2.solvePnP(obj_pts, img_pts, mtx, None)
 	ret, rvec, tvec = cv2.solvePnP(obj_pts, img_pts, default_mtx, None)
 
 	mtx = default_mtx
 	dist = None
-
-
-
-
-
-
-
-	#mapx,mapy = cv2.initUndistortRectifyMap(mtx,dist,None,newcameramtx,(w,h),5)
-	mapx,mapy = cv2.initUndistortRectifyMap(mtx,dist,None,mtx,(w,h),5)
-	color_calib = cv2.remap(color2,mapx,mapy,cv2.INTER_LINEAR)
-	#color_calib = cv2.undistort(color2, mtx, dist, None, mtx)
-
-	#cv2.imshow(WINNAME, color_calib)
-	#key = cv2.waitKey(0)
-	x,y,w,h = roi
-	if w and h and False:
-		cropped_calib = color_calib[y:y+h, x:x+w]
-		cv2.imshow(WINNAME, cropped_calib)
-		key = cv2.waitKey(0)
 
 	color3 = numpy.copy(color2)
 
@@ -259,11 +235,8 @@ def main():
 	# to fit the corners to a perspective.
 
 	M, hmask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-	#M, hmask = cv2.findFundamentalMat(src_pts, dst_pts, cv2.FM_RANSAC, 5.0)
-	#hmatchesMask = hmask.ravel().tolist()
 
-
-	class ChessboardFundamentalMatrixTransform(skimage.transform.FundamentalMatrixTransform):
+	class ChessboardProjectiveTransform(skimage.transform.ProjectiveTransform):
 		pass
 
 	points = [p for p in contour for contour in contours]
@@ -278,22 +251,56 @@ def main():
 	model, inliers = skimage.measure.ransac(
 		#(numpy.array(ideal_points), numpy.array(points)),
 		(src_input, dst_input),
-		#ChessboardFundamentalMatrixTransform,
-		skimage.transform.AffineTransform,
+		ChessboardProjectiveTransform,
 		min_samples=10, residual_threshold=5, max_trials=500)
 
 
 	#print('INLIERS', inliers)
 
-	#M = model.params
-	#print('Fundamental matrix', M)
-	#model = skimage.transform.AffineTransform(scale=(0.9, 0.9), rotation=0.2, translation=(20, -10))
+	M = model.params
+	ret, rvecs, tvecs, nor = cv2.decomposeHomographyMat(M, mtx)
+	#print('RVECS', rvecs)
+	#print('RVEC_OLD', rvec)
+	#print('TVECS', tvecs)
+	#print('TVEC_OLD', tvec)
+	#(rvec, tvec) = (rvecs[0], tvecs[0])
+
+	class ChessboardProjectionEstimator(object):
+		def __init__(self):
+			self.params = {}
+		def get_params(self, deep=True):
+			#print('GET_PARAMS')
+			return self.params
+		def set_params(self, **params):
+			#print('SET_PARAMS', params)
+			self.params = params
+			return self
+		def fit(self, X, y):
+			print('FIT', X, y)
+			return self
+		def score(self, X, y):
+			print('SCORE', X, y)
+			return 1
+		def predict(self, X):
+			print('PREDICT', X)
+			return [(0,)*8 for x in X]
+
+	quads = [[list(corner[0]) for corner in quad] for quad in good]
+	regressor = sklearn.linear_model.RANSACRegressor(
+		base_estimator=ChessboardProjectionEstimator(),
+		#residual_threshold=1/8.,
+		residual_threshold=1000,
+	)
+	# RANSACRegressor expects the input to be an array of points.
+	# This target data is an array of quads instead, where each quad
+	# contains 4 points. The translation is done by passing all 4 2-D
+	# points as if they were a single 8-dimensional point.
+	target_pts = [[dim for corner in quad for dim in corner] for quad in quads]
+	# A zero means a dark square and a one means a light square.
+	training_pts = [(1 if i < len(goodd) else 0,)*8 for i in range(len(quads))]
+	regressor.fit(training_pts, target_pts)
 
 
-
-	#h,w = img1.shape
-	#pts = numpy.float32([ [0,0],[0,h-1],[w-1,h-1],[w-1,0] ]).reshape(-1,1,2)
-	#dst = cv2.perspectiveTransform(pts,M)
 
 	warped = cv2.warpPerspective(refimg, M, (color3.shape[1], color3.shape[0]))
 	#warped = skimage.transform.warp(refimg, model, output_shape=color3.shape)
@@ -357,15 +364,6 @@ def main():
 
 	cv2.imshow(WINNAME, projected)
 	key = cv2.waitKey(0)
-
-
-
-	corners_vis = numpy.copy(overlay)
-	for c in get_corners(clus_corners):
-		#corners_img[(int(round(c[1])), int(round(c[0])))] = 255
-		cv2.circle(corners_vis, (int(round(c[0])), int(round(c[1]))), 3, (0, 255, 0))
-	#cv2.imshow(WINNAME, corners_vis)
-	#key = cv2.waitKey(0)
 
 
 def euclidean_distance (p1, p2):
