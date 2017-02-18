@@ -6,6 +6,7 @@ import itertools
 import math
 import numpy
 import random
+import shapely.geometry.polygon
 import skimage.measure
 import skimage.transform
 import sklearn.linear_model
@@ -13,6 +14,10 @@ import sklearn.linear_model
 
 WINNAME = 'Chess Transcription'
 
+
+def grouper(iterable, n):
+	args = [iter(iterable)] * n
+	return zip(*args)
 
 
 def main():
@@ -112,7 +117,7 @@ def main():
 		dilatedApprox = cv2.dilate(bg, kernel)
 		# TODO: This is messy. Use a mathematical translation of the contour
 		# to find the contour that barely bounds this contour with a
-		# kernel mask at each corner.
+		# kernel mask at each corner. This can be done with cv2.convexHull
 		imda, contoursa, hierarchy = cv2.findContours(dilatedApprox,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
 		if len(contoursa) != 1:
 			print('bad contour count', contoursa)
@@ -158,8 +163,9 @@ def main():
 	#key = cv2.waitKey(0)
 	#cv2.imshow(WINNAME, contlinese)
 	#key = cv2.waitKey(0)
-	cv2.imshow(WINNAME, contlines)
-	key = cv2.waitKey(0)
+
+	#cv2.imshow(WINNAME, contlines)
+	#key = cv2.waitKey(0)
 
 
 
@@ -263,11 +269,34 @@ def main():
 	#print('RVEC_OLD', rvec)
 	#print('TVECS', tvecs)
 	#print('TVEC_OLD', tvec)
-	#(rvec, tvec) = (rvecs[0], tvecs[0])
+	#(rvec, tvec) = (rvecs[0][0], tvecs[0])
 
-	class ChessboardProjectionEstimator(object):
+	(rotationMatrix, jacobian) = cv2.Rodrigues(rvec)
+	#tempMat2 = rotationMatrix.inv() * tvec;
+	#tempMat = rotationMatrix.inv() * mtx.inv() * uvPoint;
+	#print("rotationMatrix", rotationMatrix)
+	#print("jacobian", jacobian)
+	#print("mtx", mtx)
+	#print("rvec", rvec)
+	#print("tvec", tvec)
+	invRotationMtx = numpy.linalg.inv(rotationMatrix)
+	invMtx = numpy.linalg.inv(mtx)
+
+	#points = numpy.array([[good[0][0][0].astype('float32')]])
+	#print('point', points[0][0])
+	#print('M', M)
+	invM = numpy.linalg.inv(M)
+	#print('invM', invM)
+	#print('projected', invRotationMtx * (invMtx * point - tvec))
+	#proj = cv2.perspectiveTransform(points, M)
+	#print('projected', proj[0][0])
+	#ret = cv2.perspectiveTransform(proj, invM)
+	#print('ret', ret[0][0])
+
+	class ChessboardPerspectiveEstimator(object):
 		def __init__(self):
 			self.params = {}
+			self.H = numpy.identity(3)
 		def get_params(self, deep=True):
 			#print('GET_PARAMS')
 			return self.params
@@ -276,18 +305,62 @@ def main():
 			self.params = params
 			return self
 		def fit(self, X, y):
-			print('FIT', X, y)
+			#print('FIT', X, y)
+			# FIXME:
+			# I need to work with a homography matrix with 8 degrees of freedom.
+			# First I'll use a solver with 6 degrees of freedom to calculate the
+			# 2 leftmost columns of the matrix. The lower-rightmost cell will be
+			# fixed at 1. Then I'll use least squares to calculate the transformation
+			# matrix in the remaining 2 cells. After multiplying a point by the matrix,
+			# I scale it so that z is set to 1.
+			self.H = invM
 			return self
 		def score(self, X, y):
-			print('SCORE', X, y)
+			#print('SCORE', X, y)
 			return 1
 		def predict(self, X):
-			print('PREDICT', X)
-			return [(0,)*8 for x in X]
+			grouped = (grouper(quad, 2) for quad in X)
+			projected = (cv2.perspectiveTransform(
+				numpy.array([quad]).astype('float32'), self.H)[0]
+				for quad in grouped)
+			shifted = (self.shift_quad(quad) for quad in grouped)
+			predicted = [[dim for corner in quad for dim in corner] for quad in shifted]
+			#print('PREDICT', X, predicted)
+			return predicted
+		def shift_quad(self, quad):
+			"""
+			Transform the points by an integral distance and
+			reorder the points so the upper-leftmost is first
+			"""
+			center = shapely.geometry.polygon.Polygon(quad).representative_point()
+			# Move to the square nearest the origin
+			(transformx, transformy) = (-(center.x // 1), -(center.y // 1))
+			# Move to the same color square that the point started on
+			# with a 0.5 adjustment to prevent rounding errors
+			transformx += (transformx + transformy + 0.5) % 2 // 1
+			transformed = [(x + transformx, y + transformy) for (x,y) in quad]
 
-	quads = [[list(corner[0]) for corner in quad] for quad in good]
+			angles = (math.atan2(y - center.y, x - center.x) for (x, y) in quad)
+			# It is assumed the points are already listed counter-clockwise and their sequence should be preserved.
+			# If the homography inverted the orientation, then the error measurement will be high
+			# and the homography will need to be discarded.
+			# Each angle should be 90 degrees greater than the previous angle. All the angles will
+			# have the same bias (angular distance from the desired orientation) if the quad is a perfect square.
+			bias_angles = (angle + i * (math.pi/2.) for (i, angle) in enumerate(angles))
+			average_bias_angle = math.atan2(
+				sum(math.sin(angle) for angle in bias_angles),
+				sum(math.cos(angle) for angle in bias_angles))
+			# Reorder the points to minimize the bias.
+			rotation = -(int(average_bias_angle / (math.pi/2.)) + 2)
+			rotated = transformed[rotation:] + transformed[:rotation]
+			#print('quad', rotated, transformed)
+			return rotated
+
+	# Change the shape to a list of quads.
+	# Currently each square is 100 pixels per size, so normalize it down to unit squares.
+	quads = [[[dim / 100. for dim in corner[0]] for corner in quad] for quad in good]
 	regressor = sklearn.linear_model.RANSACRegressor(
-		base_estimator=ChessboardProjectionEstimator(),
+		base_estimator=ChessboardPerspectiveEstimator(),
 		#residual_threshold=1/8.,
 		residual_threshold=1000,
 	)
@@ -297,8 +370,10 @@ def main():
 	# points as if they were a single 8-dimensional point.
 	target_pts = [[dim for corner in quad for dim in corner] for quad in quads]
 	# A zero means a dark square and a one means a light square.
-	training_pts = [(1 if i < len(goodd) else 0,)*8 for i in range(len(quads))]
-	regressor.fit(training_pts, target_pts)
+	light_square = (1., 0., 2., 0., 2., 1., 1., 1.)
+	dark_square = (0., 0., 1., 0., 1., 1., 0., 1.)
+	training_pts = [(light_square if i < len(goodd) else dark_square) for i in range(len(quads))]
+	regressor.fit(target_pts, training_pts)
 
 
 
