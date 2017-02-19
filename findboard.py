@@ -9,6 +9,7 @@ import random
 import shapely.geometry.polygon
 import skimage.measure
 import skimage.transform
+import sklearn.base
 import sklearn.linear_model
 
 
@@ -293,17 +294,9 @@ def main():
 	#ret = cv2.perspectiveTransform(proj, invM)
 	#print('ret', ret[0][0])
 
-	class ChessboardPerspectiveEstimator(object):
+	class ChessboardPerspectiveEstimator(sklearn.base.BaseEstimator, sklearn.base.RegressorMixin):
 		def __init__(self):
-			self.params = {}
-			self.H = numpy.identity(3)
-		def get_params(self, deep=True):
-			#print('GET_PARAMS')
-			return self.params
-		def set_params(self, **params):
-			#print('SET_PARAMS', params)
-			self.params = params
-			return self
+			self.homography_ = numpy.identity(3)
 		def fit(self, X, y):
 			#print('FIT', X, y)
 			# FIXME:
@@ -313,15 +306,16 @@ def main():
 			# fixed at 1. Then I'll use least squares to calculate the transformation
 			# matrix in the remaining 2 cells. After multiplying a point by the matrix,
 			# I scale it so that z is set to 1.
-			self.H = invM
+			self.homography_ = invM
 			return self
 		def score(self, X, y):
-			#print('SCORE', X, y)
-			return 1
+			s = super(ChessboardPerspectiveEstimator, self).score(X, y)
+			#print('SCORE', X, y, s)
+			return s
 		def predict(self, X):
 			grouped = (grouper(quad, 2) for quad in X)
 			projected = (cv2.perspectiveTransform(
-				numpy.array([quad]).astype('float32'), self.H)[0]
+				numpy.array([quad]).astype('float32'), self.homography_)[0]
 				for quad in grouped)
 			shifted = (self.shift_quad(quad) for quad in grouped)
 			predicted = [[dim for corner in quad for dim in corner] for quad in shifted]
