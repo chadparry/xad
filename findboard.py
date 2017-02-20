@@ -6,6 +6,7 @@ import itertools
 import math
 import numpy
 import random
+import scipy.optimize
 import shapely.geometry.polygon
 import skimage.measure
 import skimage.transform
@@ -297,27 +298,75 @@ def main():
 	class ChessboardPerspectiveEstimator(sklearn.base.BaseEstimator, sklearn.base.RegressorMixin):
 		def __init__(self):
 			self.homography_ = numpy.identity(3)
+			# FIXME: This starts out with a known good value.
+			self.homography_ = invM
+		def shape_homography(self, rotation, translation):
+			return numpy.concatenate((
+				rotation.reshape(3, 2),
+				numpy.concatenate((translation, [1.])).reshape(3, 1)),
+				axis=1)
+		def min_translation(self, true_centers, projected_centers):
+			offsets = (projected_point - true_point for (projected_point, true_point) in zip(projected_centers, true_centers))
+			# Shift every other row sideways, so all the like-colored squares line up.
+			shifted = ((x + y % 2 // 1, y) for (x, y) in offsets)
+			# We need the best translation that puts the points closest to true square points.
+			# The translation in each dimension can be calculated independently.
+			# It doesn't matter which square the points are near, so that means that modular arithmetic is needed.
+			# The offsets need to be brought as close as possible to any integral values.
+			# To do that, the points are translated to points on a unit circle and the average angle is computed.
+			angles = ((x * math.pi, y * math.pi*2) for (x, y) in shifted)
+			(anglesx, anglesy) = zip(*angles)
+			biasanglex = math.atan2(
+				sum(math.sin(angle) for angle in anglesx),
+				sum(math.cos(angle) for angle in anglesx))
+			biasangley = math.atan2(
+				sum(math.sin(angle) for angle in anglesy),
+				sum(math.cos(angle) for angle in anglesy))
+			biasx = biasanglex / math.pi
+			biasy = biasangley / (math.pi*2)
+			translation = [biasx, biasy]
+			return translation
+		def objective(self, sample_centers, true_centers, x):
+			#print('obj', x)
+			rotation = self.shape_homography(x, [0, 0])
+			projected_centers = cv2.perspectiveTransform(
+				numpy.array([sample_centers]).astype('float32'), rotation)[0]
+			translation = self.min_translation(true_centers, projected_centers)
+			translated_centers = (projected_center + translation for projected_center in projected_centers)
+			offsets = (true_point - translated_point for (true_point, translated_point) in zip(true_centers, translated_centers))
+			distance = sum(offset_x**2 + offset_y**2 for (offset_x, offset_y) in offsets)
+			return distance
 		def fit(self, X, y):
 			#print('FIT', X, y)
-			# FIXME:
-			# I need to work with a homography matrix with 8 degrees of freedom.
-			# First I'll use a solver with 6 degrees of freedom to calculate the
-			# 2 leftmost columns of the matrix. The lower-rightmost cell will be
-			# fixed at 1. Then I'll use least squares to calculate the transformation
-			# matrix in the remaining 2 cells. After multiplying a point by the matrix,
-			# I scale it so that z is set to 1.
-			self.homography_ = invM
+			seed = [cell for row in self.homography_ for cell in row[:2]]
+			sample_quads = (grouper(quad, 2) for quad in X)
+			sample_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in sample_quads)
+			sample_center_coords = [(point.x, point.y) for point in sample_center_points]
+			true_quads = (grouper(quad, 2) for quad in y)
+			true_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in true_quads)
+			true_center_coords = [(point.x, point.y) for point in true_center_points]
+			res = scipy.optimize.basinhopping(lambda x: self.objective(sample_center_coords, true_center_coords, x), seed)
+			if not res.lowest_optimization_result.success:
+				raise RuntimeError('solver failed: ' + res.lowest_optimization_result.message)
+			fitted = res.lowest_optimization_result.x
+
+			# The translation had already been determined deep inside the objective function,
+			# but it was lost and needs to be recovered.
+			rotation = self.shape_homography(fitted, [0, 0])
+			projected_centers = cv2.perspectiveTransform(
+				numpy.array([sample_center_coords]).astype('float32'), rotation)[0]
+			translation = self.min_translation(true_center_coords, projected_centers)
+			self.homography_ = self.shape_homography(fitted, translation)
 			return self
 		def score(self, X, y):
 			s = super(ChessboardPerspectiveEstimator, self).score(X, y)
 			#print('SCORE', X, y, s)
 			return s
 		def predict(self, X):
-			grouped = (grouper(quad, 2) for quad in X)
-			projected = (cv2.perspectiveTransform(
-				numpy.array([quad]).astype('float32'), self.homography_)[0]
-				for quad in grouped)
-			shifted = (self.shift_quad(quad) for quad in grouped)
+			quads = [grouper(quad, 2) for quad in X]
+			projected = cv2.perspectiveTransform(
+				numpy.array(quads).astype('float32'), self.homography_)
+			shifted = (self.shift_quad(quad) for quad in projected)
 			predicted = [[dim for corner in quad for dim in corner] for quad in shifted]
 			#print('PREDICT', X, predicted)
 			return predicted
@@ -327,12 +376,11 @@ def main():
 			reorder the points so the upper-leftmost is first
 			"""
 			center = shapely.geometry.polygon.Polygon(quad).representative_point()
-			# Move to the square nearest the origin
-			(transformx, transformy) = (-(center.x // 1), -(center.y // 1))
-			# Move to the same color square that the point started on
-			# with a 0.5 adjustment to prevent rounding errors
-			transformx += (transformx + transformy + 0.5) % 2 // 1
-			transformed = [(x + transformx, y + transformy) for (x,y) in quad]
+			# Shift every other row sideways, so all the like-colored squares line up.
+			(shiftedx, shiftedy) = (center.x + center.y % 2 // 1, center.y)
+			# Move to the two light and dark squares nearest the origin.
+			(transformx, transformy) = (-(shiftedx // 2 * 2), -(shiftedy // 1))
+			transformed = [(x + transformx, y + transformy) for (x, y) in quad]
 
 			angles = (math.atan2(y - center.y, x - center.x) for (x, y) in quad)
 			# It is assumed the points are already listed counter-clockwise and their sequence should be preserved.
@@ -368,6 +416,7 @@ def main():
 	dark_square = (0., 0., 1., 0., 1., 1., 0., 1.)
 	training_pts = [(light_square if i < len(goodd) else dark_square) for i in range(len(quads))]
 	regressor.fit(target_pts, training_pts)
+	M = numpy.linalg.inv(regressor.estimator_.homography_)
 
 
 
