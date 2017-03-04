@@ -112,6 +112,10 @@ def main():
 		if cv2.contourArea(approx) < 40:
 			continue
 
+		# FIXME: Remove bookshelf contours
+		if approx[0][0][1] < 300:
+			continue
+
 		# Dilate the contour
 		bg = numpy.zeros((color2.shape[0], color2.shape[1]), dtype=numpy.uint8)
 		cv2.drawContours(bg, [approx], -1, 255, cv2.FILLED)
@@ -213,7 +217,6 @@ def main():
 	dst_pts = numpy.float32([ pt for pt in get_corners(clus_corners) ]).reshape(-1,1,2)
 
 
-
 	# Calibrate the camera.
 	obj_pts = numpy.array([[(p[0][0], p[0][1], 0) for p in src_pts]]).astype('float32')
 	#print(obj_pts)
@@ -265,8 +268,9 @@ def main():
 
 	#print('INLIERS', inliers)
 
-	M = model.params
-	ret, rvecs, tvecs, nor = cv2.decomposeHomographyMat(M, mtx)
+	#M = model.params
+	#ret, rvecs, tvecs, nor = cv2.decomposeHomographyMat(M, mtx)
+
 	#print('RVECS', rvecs)
 	#print('RVEC_OLD', rvec)
 	#print('TVECS', tvecs)
@@ -295,16 +299,68 @@ def main():
 	#ret = cv2.perspectiveTransform(proj, invM)
 	#print('ret', ret[0][0])
 
+	#M[2][0] *= 10.
+	#M[2][1] *= 1.
+	#M[0][0] *= 10.
+	#M[0][2] += 10000.
+	#print('M', M)
+	for shift in xrange(-10000, 10000, 1000):
+		break
+		shiftM = numpy.copy(M)
+		shiftM[0][2] += shift
+		print('M', shift, shiftM)
+		warpedtest = cv2.warpPerspective(refimg, shiftM, (color2.shape[1], color2.shape[0]))
+		cv2.imshow(WINNAME, warpedtest)
+		key = cv2.waitKey(0)
+
+	#invM[2][0] *= 10.
+	#invM[2][1] *= 1.
+	a = 0.75
+	#invM = numpy.dot(numpy.array([[math.cos(a), -math.sin(a), 0], [math.sin(a), math.cos(a), 0], [0, 0, 1]]), invM)
+	#invM[0][1] *= 1.5
+	#invM[1][0] /= 1.5
+	last = 0
+	for shift in xrange(-500, 500, 50):
+		break
+		shiftM = numpy.copy(invM)
+		shiftM = numpy.dot(numpy.array([[1., 0., float(shift)], [0., 1., 0.], [0., 0., 1.]]), invM)
+		#print('M', shift, shiftM)
+
+		projected = cv2.perspectiveTransform(
+			numpy.array([src_pts[0]]).astype('float32'), shiftM)[0]
+		print('projected', projected[0][0], projected[0][0] - last)
+		last = projected[0][0]
+
+		warpedtest = cv2.warpPerspective(color2, shiftM, (refimg.shape[1], refimg.shape[0]))
+		cv2.imshow(WINNAME, warpedtest)
+		key = cv2.waitKey(250)
+
+	zoom_out = numpy.array([[0.01, 0., 0.], [0., 0.01, 0.], [0., 0., 1.]])
+	Mout = numpy.dot(zoom_out, M)
+	invMout = numpy.dot(zoom_out, invM)
+	warpedtest = cv2.warpPerspective(refimg, M, (color2.shape[1], color2.shape[0]))
+	#cv2.imshow(WINNAME, warpedtest)
+	#key = cv2.waitKey(0)
+
+	zoom_in = numpy.array([[100., 0., 0.], [0., 100., 0.], [0., 0., 1.]])
+	Min = numpy.dot(zoom_in, M)
+	invMin = numpy.dot(zoom_in, invM)
+
+	warpedtest = cv2.warpPerspective(color2, invMin, (refimg.shape[1], refimg.shape[0]))
+	warpedtest = cv2.warpPerspective(color2, invM, (8, 8))
+	#cv2.imshow(WINNAME, warpedtest)
+	#key = cv2.waitKey(0)
+
+	#return
+
+	# FIXME: Discard any RANSAC sample sets where the furthest points are more than 9 units apart.
 	class ChessboardPerspectiveEstimator(sklearn.base.BaseEstimator, sklearn.base.RegressorMixin):
 		def __init__(self):
 			self.homography_ = numpy.identity(3)
 			# FIXME: This starts out with a known good value.
-			self.homography_ = invM
-		def shape_homography(self, rotation, translation):
-			return numpy.concatenate((
-				rotation.reshape(3, 2),
-				numpy.concatenate((translation, [1.])).reshape(3, 1)),
-				axis=1)
+			self.homography_ = invMout
+		def shape_homography(self, rotation):
+			return numpy.concatenate((rotation.reshape(3, 2), [[0.], [0.], [1.]]), axis=1)
 		def min_translation(self, true_centers, projected_centers):
 			offsets = (projected_point - true_point for (projected_point, true_point) in zip(projected_centers, true_centers))
 			# Shift every other row sideways, so all the like-colored squares line up.
@@ -326,51 +382,136 @@ def main():
 			biasy = biasangley / (math.pi*2)
 			translation = [biasx, biasy]
 			return translation
-		def objective(self, sample_centers, true_centers, x):
+		def objective(self, sample_centers, true_centers, sample_quads, true_quads, x):
 			#print('obj', x)
-			rotation = self.shape_homography(x, [0, 0])
+			rotation = self.shape_homography(x)
 			projected_centers = cv2.perspectiveTransform(
 				numpy.array([sample_centers]).astype('float32'), rotation)[0]
+			projected_quads = cv2.perspectiveTransform(
+				numpy.array(sample_quads).astype('float32'), rotation)
 			translation = self.min_translation(true_centers, projected_centers)
 			translated_centers = (projected_center + translation for projected_center in projected_centers)
-			offsets = (true_point - translated_point for (true_point, translated_point) in zip(true_centers, translated_centers))
-			distance = sum(offset_x**2 + offset_y**2 for (offset_x, offset_y) in offsets)
+			# Shift every other row sideways, so all the like-colored squares line up.
+			shifted_centers = ((x + y % 2 // 1, y) for (x, y) in translated_centers)
+			mod_centers = ((x % 2, y % 1) for (x, y) in shifted_centers)
+			quad_translations = (mod_center - projected_center
+				for (projected_center, mod_center) in zip(projected_centers, mod_centers))
+			rotated_quads = (self.rotate_quad(quad) for quad in sample_quads)
+			translated_quads = ([(x + translationx, y + translationy) for (x, y) in quad]
+				for ((translationx, translationy), quad) in zip(quad_translations, rotated_quads))
+
+			offsets = ([true_dim - translated_dim for (true_dim, translated_dim) in zip(true_point, translated_point)]
+				for (true_quad, translated_quad) in zip(true_quads, translated_quads)
+				for (true_point, translated_point) in zip(true_quad, translated_quad))
+			distance = sum(dim**2 for offset in offsets for dim in offset)
+
+			#homography = numpy.append(x, [1]).reshape(3, 3)
+			#projected_centers = cv2.perspectiveTransform(
+			#	numpy.array([sample_centers]).astype('float32'), homography)[0]
+			#offsets = (true_point - projected_point for (true_point, projected_point) in zip(true_centers, projected_centers))
+			# Shift every other row sideways, so all the like-colored squares line up.
+
+			#shifted = ((x + y % 2 // 1, y) for (x, y) in offsets)
+			#mod = ((x % 2, y % 1) for (x, y) in shifted)
+
+			#distance = sum(offset_x**2 + offset_y**2 for (offset_x, offset_y) in mod)
+			#print('distance', distance)
 			return distance
 		def fit(self, X, y):
+			print('fit')
 			#print('FIT', X, y)
-			seed = [cell for row in self.homography_ for cell in row[:2]]
-			sample_quads = (grouper(quad, 2) for quad in X)
+			scaled = self.homography_ / self.homography_[2][2]
+			seed = numpy.array([cell for row in scaled for cell in row[:-1]])	
+			sample_quads = [grouper(quad, 2) for quad in X]
 			sample_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in sample_quads)
 			sample_center_coords = [(point.x, point.y) for point in sample_center_points]
-			true_quads = (grouper(quad, 2) for quad in y)
+			true_quads = [grouper(quad, 2) for quad in y]
 			true_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in true_quads)
 			true_center_coords = [(point.x, point.y) for point in true_center_points]
-			res = scipy.optimize.basinhopping(lambda x: self.objective(sample_center_coords, true_center_coords, x), seed)
+			print('basinhopping...')
+			res = scipy.optimize.basinhopping(lambda x: self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads, x), seed)
 			if not res.lowest_optimization_result.success:
 				raise RuntimeError('solver failed: ' + res.lowest_optimization_result.message)
+			print('basinhopping done')
 			fitted = res.lowest_optimization_result.x
 
+			# FIXME
 			# The translation had already been determined deep inside the objective function,
 			# but it was lost and needs to be recovered.
-			rotation = self.shape_homography(fitted, [0, 0])
+			rotation = self.shape_homography(fitted)
 			projected_centers = cv2.perspectiveTransform(
 				numpy.array([sample_center_coords]).astype('float32'), rotation)[0]
 			translation = self.min_translation(true_center_coords, projected_centers)
-			self.homography_ = self.shape_homography(fitted, translation)
+			transM = numpy.array([[1., 0., translation[0]], [0., 1., translation[1]], [0., 0., 1.]])
+			print('LAST')
+			self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, self.homography_)
+
+			print('ROTATION')
+			self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, rotation)
+
+			self.homography_ = numpy.dot(transM, rotation)
+			#print('sample', sample_center_coords)
+			#print('true', true_center_coords)
+			#print('scaled', scaled)
+			#self.homography_ = numpy.append(fitted, [1]).reshape(3, 3)
+			print('TRANSLATED')
+			# FIXME: In the objective function, the points should not be translated any more,
+			# and this score should exactly equal ROTATION above!
+			self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, self.homography_)
+
+			corners_vis = numpy.copy(color2)
+			for c in sample_center_coords:
+				#corners_img	[(int(round(c[1])), int(round(c[0])))] = 255
+				cv2.circle(corners_vis, (int(round(c[0])), int(round(c[1]))), 3, (0, 255, 0))
+			#cv2.imshow(WINNAME, corners_vis)
+			#key = cv2.waitKey(0)
+
+			#warped = cv2.warpPerspective(refimg, M, (color3.shape[1], color3.shape[0]))
+			#cv2.imshow(WINNAME, warped)
+			#key = cv2.waitKey(0)
+
 			return self
+		def show_homography(self, sample_center_coords, true_center_coords, sample_quads, true_quads, homography):
+			scaled = homography / homography[2][2]
+			print(scaled)
+			print(self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads,
+				numpy.array([cell for row in scaled for cell in row[:-1]])))
+			zoomM = numpy.dot(zoom_in, scaled)
+			reverseM = numpy.linalg.inv(zoomM)
+			warped = cv2.warpPerspective(refimg,
+					reverseM,
+					(color3.shape[1], color3.shape[0]))
+
+			flatmask = numpy.full(refimg.shape, 255, dtype=numpy.uint8)
+			warpedmask = cv2.warpPerspective(flatmask, reverseM, (color3.shape[1], color3.shape[0]))
+			maskidx = (warpedmask!=0)
+			overlay = numpy.copy(color3)
+			overlay[maskidx] = warped[maskidx]
+
+			cv2.imshow(WINNAME, overlay)
+			key = cv2.waitKey(0)
+
+			idealized = cv2.warpPerspective(color3,
+					zoomM,
+					(refimg.shape[1], refimg.shape[0]))
+			cv2.imshow(WINNAME, idealized)
+			key = cv2.waitKey(0)
+
 		def score(self, X, y):
+			print('score')
 			s = super(ChessboardPerspectiveEstimator, self).score(X, y)
 			#print('SCORE', X, y, s)
 			return s
 		def predict(self, X):
+			print('predict')
 			quads = [grouper(quad, 2) for quad in X]
 			projected = cv2.perspectiveTransform(
 				numpy.array(quads).astype('float32'), self.homography_)
-			shifted = (self.shift_quad(quad) for quad in projected)
+			shifted = (self.rotate_quad(quad) for quad in projected)
 			predicted = [[dim for corner in quad for dim in corner] for quad in shifted]
 			#print('PREDICT', X, predicted)
 			return predicted
-		def shift_quad(self, quad):
+		def rotate_quad(self, quad):
 			"""
 			Transform the points by an integral distance and
 			reorder the points so the upper-leftmost is first
@@ -394,13 +535,14 @@ def main():
 				sum(math.cos(angle) for angle in bias_angles))
 			# Reorder the points to minimize the bias.
 			rotation = -(int(average_bias_angle / (math.pi/2.)) + 2)
+			#print('rotation', rotation)
 			rotated = transformed[rotation:] + transformed[:rotation]
-			#print('quad', rotated, transformed)
 			return rotated
 
 	# Change the shape to a list of quads.
 	# Currently each square is 100 pixels per size, so normalize it down to unit squares.
 	quads = [[[dim / 100. for dim in corner[0]] for corner in quad] for quad in good]
+	#quads = [[[dim for dim in corner[0]] for corner in quad] for quad in good]
 	regressor = sklearn.linear_model.RANSACRegressor(
 		base_estimator=ChessboardPerspectiveEstimator(),
 		#residual_threshold=1/8.,
@@ -416,7 +558,7 @@ def main():
 	dark_square = (0., 0., 1., 0., 1., 1., 0., 1.)
 	training_pts = [(light_square if i < len(goodd) else dark_square) for i in range(len(quads))]
 	regressor.fit(target_pts, training_pts)
-	M = numpy.linalg.inv(regressor.estimator_.homography_)
+	M = numpy.linalg.inv(numpy.dot(zoom_in, regressor.estimator_.homography_))
 
 
 
@@ -480,8 +622,8 @@ def main():
 	for (bp, tp) in zip(imgp, imgtp):
 		cv2.line(projected,(bp[0][0],bp[0][1]),(tp[0][0],tp[0][1]),(255,0,0),2)
 
-	cv2.imshow(WINNAME, projected)
-	key = cv2.waitKey(0)
+	#cv2.imshow(WINNAME, projected)
+	#key = cv2.waitKey(0)
 
 
 def euclidean_distance (p1, p2):
