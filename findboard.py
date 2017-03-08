@@ -85,9 +85,8 @@ def main():
 
 	im2, contoursd, hierarchy = cv2.findContours(dilated,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
 	ime2, contourse, hierarchy = cv2.findContours(eroded,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
-	contoursd = []
 	contours = contoursd + contourse
-	print('contours', len(contoursd), len(contourse), len(contours))
+	#print('contours', len(contoursd), len(contourse), len(contours))
 
 	good = []
 	goodd = []
@@ -114,8 +113,8 @@ def main():
 			continue
 
 		# FIXME: Remove bookshelf contours
-		if approx[0][0][1] < 300:
-			continue
+		#if approx[0][0][1] < 300:
+		#	continue
 
 		# Dilate the contour
 		bg = numpy.zeros((color2.shape[0], color2.shape[1]), dtype=numpy.uint8)
@@ -142,7 +141,7 @@ def main():
 			goodd.append(contoursa1)
 		else:
 			goode.append(contoursa1)
-	print('good', len(goodd), len(goode), len(good))
+	#print('good', len(goodd), len(goode), len(good))
 
 	contcorners = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
 	contlines = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
@@ -367,7 +366,7 @@ def main():
 
 	Mtrans = numpy.copy(invMout)
 	#Mtrans = Mtrans / Mtrans[2][2]
-	print('M', Mtrans)
+	#print('M', Mtrans)
 	#t2 = (Mtrans[1][2] - Mtrans[1][0] * Mtrans[0][2] / Mtrans[0][0]) / (Mtrans[1][0] * Mtrans[0][1] / Mtrans[0][0] - Mtrans[1][1])
 	#t1 = - (Mtrans[0][1] * t2 + Mtrans[0][2]) / Mtrans[0][0]
 	t1 = - Mtrans[0][2] / Mtrans[2][2]
@@ -377,9 +376,9 @@ def main():
 		[0., 1., t2],
 		[0., 0., 1.],
 	])
-	print('t', t1, t2)
-	Muntrans = numpy.dot(untrans, invMout)
-	print('M-untrans', Muntrans)
+	#print('t', t1, t2)
+	Muntrans = numpy.dot(untrans, Mtrans)
+	#print('M-untrans', Muntrans)
 
 	# FIXME: Discard any RANSAC sample sets where the furthest points are more than 9 units apart.
 	class ChessboardPerspectiveEstimator(sklearn.base.BaseEstimator, sklearn.base.RegressorMixin):
@@ -393,15 +392,17 @@ def main():
 		def shape_homography(self, rotation):
 			return numpy.concatenate((rotation.reshape(3, 2), [[0.], [0.], [1.]]), axis=1)
 		def min_translation(self, true_centers, projected_centers):
-			offsets = (projected_point - true_point for (projected_point, true_point) in zip(projected_centers, true_centers))
 			# Shift every other row sideways, so all the like-colored squares line up.
-			shifted = ((x + y % 2 // 1, y) for (x, y) in offsets)
+			shifted_centers = ((x + y % 2 // 1, y) for (x, y) in projected_centers)
+			offsets = ([sd - td for (sd, td) in zip(shifted_point, true_point)] for (shifted_point, true_point) in zip(shifted_centers, true_centers))
+			#offsets = list(offsets)
 			# We need the best translation that puts the points closest to true square points.
 			# The translation in each dimension can be calculated independently.
 			# It doesn't matter which square the points are near, so that means that modular arithmetic is needed.
 			# The offsets need to be brought as close as possible to any integral values.
 			# To do that, the points are translated to points on a unit circle and the average angle is computed.
-			angles = ((x * math.pi, y * math.pi*2) for (x, y) in shifted)
+			angles = ((x * math.pi, y * math.pi*2) for (x, y) in offsets)
+			#angles = list(angles)
 			(anglesx, anglesy) = zip(*angles)
 			biasanglex = math.atan2(
 				sum(math.sin(angle) for angle in anglesx),
@@ -411,7 +412,15 @@ def main():
 				sum(math.cos(angle) for angle in anglesy))
 			biasx = biasanglex / math.pi
 			biasy = biasangley / (math.pi*2)
-			translation = [biasx, biasy]
+			translation = [-biasx, -biasy]
+			#print('offsets', offsets)
+			#print('angles', angles)
+			#print('mod angles', [(x % (math.pi*2.), y % (math.pi*2.)) for (x,y) in angles])
+			#print('biasangle', (biasanglex, biasangley))
+			#print('min translation', translation)
+			#for (projected_point, true_point) in zip(projected_centers, true_centers):
+			#	print('    offset', projected_point[0] - true_point[0], '=>', projected_point[0] + translation[0] - true_point[0], (projected_point[0] + translation[0], projected_point[1] + translation[1]))
+			#print('new centers', [(x+translation[0], y+translation[1]) for (x, y) in offsets])
 			return translation
 		def objective(self, sample_centers, true_centers, sample_quads, true_quads, x):
 			#print('obj', x)
@@ -421,19 +430,33 @@ def main():
 			projected_quads = cv2.perspectiveTransform(
 				numpy.array(sample_quads).astype('float32'), rotation)
 			translation = self.min_translation(true_centers, projected_centers)
+
+			transM = numpy.array([[1., 0., translation[0]], [0., 1., translation[1]], [0., 0., 1.]])
+			translatedM = numpy.dot(transM, rotation)
+			self.show_homography(sample_centers, true_centers, sample_quads, true_quads, translatedM)
+
+
 			translated_centers = (projected_center + translation for projected_center in projected_centers)
+			translated_centers = list(translated_centers)
 			# Shift every other row sideways, so all the like-colored squares line up.
 			shifted_centers = ((x + y % 2 // 1, y) for (x, y) in translated_centers)
 			mod_centers = ((x % 2, y % 1) for (x, y) in shifted_centers)
 			quad_translations = (mod_center - projected_center
 				for (projected_center, mod_center) in zip(projected_centers, mod_centers))
-			rotated_quads = (self.rotate_quad(quad) for quad in sample_quads)
-			translated_quads = ([(x + translationx, y + translationy) for (x, y) in quad]
-				for ((translationx, translationy), quad) in zip(quad_translations, rotated_quads))
+
+			translated_quads = ([[pd + td for (pd, td) in zip(point, translation)] for point in projected_quad] for projected_quad in projected_quads)
+			translated_quads = list(translated_quads)
+			rotated_quads = (self.rotate_quad(quad) for quad in translated_quads)
+			rotated_quads = list(rotated_quads)
+			print('rotated', rotated_quads)
+			#translated_quads = ([(x + translationx, y + translationy) for (x, y) in quad]
+			#	for ((translationx, translationy), quad) in zip(quad_translations, rotated_quads))
 
 			offsets = ([true_dim - translated_dim for (true_dim, translated_dim) in zip(true_point, translated_point)]
-				for (true_quad, translated_quad) in zip(true_quads, translated_quads)
+				for (true_quad, translated_quad) in zip(true_quads, rotated_quads)
 				for (true_point, translated_point) in zip(true_quad, translated_quad))
+			offsets = list(offsets)
+			print('offsets', offsets)
 			distance = sum(dim**2 for offset in offsets for dim in offset)
 
 			#homography = numpy.append(x, [1]).reshape(3, 3)
@@ -449,16 +472,18 @@ def main():
 			#print('distance', distance)
 			return distance
 		def fit(self, X, y):
-			print('fit', len(X))
+			#print('fit', len(X))
 			#print('FIT', X, y)
 			scaled = self.untrans_homography_ / self.untrans_homography_[2][2]
 			seed = numpy.array([cell for row in scaled for cell in row[:-1]])
 			sample_quads = [grouper(quad, 2) for quad in X]
-			sample_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in sample_quads)
-			sample_center_coords = [(point.x, point.y) for point in sample_center_points]
+			#sample_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in sample_quads)
+			#sample_center_coords = [(point.x, point.y) for point in sample_center_points]
+			sample_center_coords = [get_centroid(quad) for quad in sample_quads]
 			true_quads = [grouper(quad, 2) for quad in y]
-			true_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in true_quads)
-			true_center_coords = [(point.x, point.y) for point in true_center_points]
+			#true_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in true_quads)
+			#true_center_coords = [(point.x, point.y) for point in true_center_points]
+			true_center_coords = [get_centroid(quad) for quad in true_quads]
 			#print('basinhopping...')
 			#res = scipy.optimize.basinhopping(lambda x: self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads, x), seed)
 			#if not res.lowest_optimization_result.success:
@@ -476,22 +501,23 @@ def main():
 			projected_centers = cv2.perspectiveTransform(
 				numpy.array([sample_center_coords]).astype('float32'), rotation)[0]
 			translation = self.min_translation(true_center_coords, projected_centers)
-			print('Translation', translation)
 			transM = numpy.array([[1., 0., translation[0]], [0., 1., translation[1]], [0., 0., 1.]])
 			#print('LAST')
 			#self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, self.homography_)
 
-			print('ROTATION')
-			self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, rotation)
+			#print('ROTATION')
+			#self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, rotation)
 
 			self.homography_ = numpy.dot(transM, rotation)
+			#self.homography_ = numpy.linalg.inv(numpy.dot(numpy.linalg.inv(transM), numpy.linalg.inv(rotation)))
+
 
 			projected_quads = cv2.perspectiveTransform(
 				numpy.array(sample_quads).astype('float32'), self.homography_)
 			for (pq, tq) in zip(projected_quads, true_quads):
-				rq = self.rotate_quad(pq)
-				print('quad score', sum((td-rd)**2 for (rp, tp) in zip(rq, tq) for (rd, td) in zip(rp, tp)),
-					rq, tq)
+				rq = self.rotate_quad(pq, tq)
+				score = sum((td-rd)**2 for (rp, tp) in zip(rq, tq) for (rd, td) in zip(rp, tp))
+				print('quad score', score, rq, tq)
 
 			#print('sample', sample_center_coords)
 			#print('true', true_center_coords)
@@ -500,7 +526,32 @@ def main():
 			print('TRANSLATED')
 			# FIXME: In the objective function, the points should not be translated any more,
 			# and this score should exactly equal ROTATION above!
-			self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, self.homography_)
+
+			#self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, self.homography_)
+			Mtrans = numpy.copy(self.homography_)
+			t1 = - Mtrans[0][2] / Mtrans[2][2]
+			t2 = - Mtrans[1][2] / Mtrans[2][2]
+			untrans = numpy.array([
+				[1., 0., t1],
+				[0., 1., t2],
+				[0., 0., 1.],
+			])
+			#print('t', t1, t2)
+			Muntrans = numpy.dot(untrans, Mtrans)
+			Muntrans = Muntrans / Muntrans[2][2]
+			print('score', self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads,
+				numpy.array([cell for row in Muntrans for cell in row[:-1]])))
+
+
+			#doubletrans_sample_centers = [(x+translation[0], y+translation[1]) for (x,y) in sample_center_coords]
+			#doubletrans_projected_centers = cv2.perspectiveTransform(
+			#	numpy.array([doubletrans_sample_centers]).astype('float32'), rotation)[0]
+			#doubletranslation = self.min_translation(true_center_coords, doubletrans_projected_centers)
+			#doubletransM = numpy.array([[1., 0., doubletranslation[0]], [0., 1., doubletranslation[1]], [0., 0., 1.]])
+			#doubletrans = numpy.linalg.inv(numpy.dot(numpy.linalg.inv(doubletransM), numpy.linalg.inv(self.homography_)))
+			#print('DOUBLE TRANSLATED', doubletranslation)
+			#self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, doubletrans)
+
 
 			corners_vis = numpy.copy(color2)
 			for c in sample_center_coords:
@@ -516,15 +567,14 @@ def main():
 			return self
 		def show_homography(self, sample_center_coords, true_center_coords, sample_quads, true_quads, homography):
 			# Move to a visible area of the image
-			sample_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in sample_quads)
 			projected_centers = cv2.perspectiveTransform(
 				numpy.array([sample_center_coords]).astype('float32'), homography)[0]
 			group_center_x = sum(x for (x, y) in projected_centers) / float(len(projected_centers))
 			group_center_y = sum(y for (x, y) in projected_centers) / float(len(projected_centers))
 			#print('group_center', group_center_x, group_center_y)
-			distance = (4. - group_center_x, 4. - group_center_y)
+			distance = (5. - group_center_x, 5. - group_center_y)
 			translation = (distance[0] // 2. * 2, distance[1] // 2. * 2)
-			#print('translation', translation)
+			#print('translation for show', translation)
 			transM = numpy.array([[1., 0., translation[0]], [0., 1., translation[1]], [0., 0., 1.]])
 			centeredM = numpy.dot(transM, homography)
 			scaled = centeredM / centeredM[2][2]
@@ -532,8 +582,18 @@ def main():
 			zoomM = numpy.dot(zoom_in, scaled)
 			reverseM = numpy.linalg.inv(zoomM)
 
-			print('score', self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads,
-				numpy.array([cell for row in scaled for cell in row[:-1]])))
+			Mtrans = numpy.copy(homography)
+			t1 = - Mtrans[0][2] / Mtrans[2][2]
+			t2 = - Mtrans[1][2] / Mtrans[2][2]
+			untrans = numpy.array([
+				[1., 0., t1],
+				[0., 1., t2],
+				[0., 0., 1.],
+			])
+			#print('t', t1, t2)
+			Muntrans = numpy.dot(untrans, Mtrans)
+				#print('score', self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads,
+			#	numpy.array([cell for row in Muntrans for cell in row[:-1]])))
 			warped = cv2.warpPerspective(refimg,
 					reverseM,
 					(color3.shape[1], color3.shape[0]))
@@ -549,6 +609,9 @@ def main():
 				contours = [numpy.array([[point] for point in quad]).astype('int')]
 				#cv2.drawContours(overlay, contours, -1, 255, cv2.FILLED)
 				cv2.drawContours(overlay, contours, -1, 255, 2)
+				#c = shapely.geometry.polygon.Polygon(quad).representative_point()
+				c = [sum(p[dim] for p in quad)/4. for dim in [0, 1]]
+				cv2.circle(overlay, (int(round(c[0])), int(round(c[1]))), 3, (0, 255, 0))
 
 			cv2.imshow(WINNAME, overlay)
 			key = cv2.waitKey(0)
@@ -561,9 +624,12 @@ def main():
 			for quad in projected_quads:
 				contours = [numpy.array([[point] for point in quad]).astype('int')]
 				cv2.drawContours(idealized, contours, -1, 255, 2)
-
-			cv2.imshow(WINNAME, idealized)
-			key = cv2.waitKey(0)
+				#c = shapely.geometry.polygon.Polygon(quad).representative_point()
+				c = [sum(p[dim] for p in quad)/4. for dim in [0, 1]]
+				cv2.circle(idealized, (int(round(c[0])), int(round(c[1]))), 3, (0, 255, 0))
+	
+			#cv2.imshow(WINNAME, idealized)
+			#key = cv2.waitKey(0)
 
 		def score(self, X, y):
 			print('score')
@@ -579,28 +645,32 @@ def main():
 			predicted = [[dim for corner in quad for dim in corner] for quad in shifted]
 			#print('PREDICT', X, predicted)
 			return predicted
-		def rotate_quad(self, quad, debug=False):
+		def rotate_quad(self, quad, tq=None, debug=False):
 			"""
 			Transform the points by an integral distance and
 			reorder the points so the upper-leftmost is first
 			"""
-			center = shapely.geometry.polygon.Polygon(quad).representative_point()
-			# Shift every other row sideways, so all the like-colored squares line up.
-			(shiftedx, shiftedy) = (
-				# First find which group of two squares the center is in
-				center.x // 2 * 2 +
-				# Then decide whether to shift by one square
-				((center.x + center.y % 2 // 1) +
-				# Then find the right place within the group of two squares
-				center.x) % 2,
+			#center = shapely.geometry.polygon.Polygon(quad).representative_point()
+			center = get_centroid(quad)
+			# Start with the x-coordinate
+			#(transformx, transformy) = (-((center[0] -
+			#	# Then decide whether to shift by one square, so the color doesn't change
+			#	center[1] % 2 // 1
+			#	# Then find which group of two squares the center is in
+			#	) // 2 * 2),
+			#	# The x coord already preserves the color, so the y coord doesn't need to shift.
+			#	-(center[1] // 1))
+
+			# First find the distance to the origin
+			(transformx, transformy) = (-(center[0] // 1 -
+				# Then decide whether to shift by one square, so the color doesn't change
+				(center[0]  % 2 // 1 + center[1] % 2 // 1) % 2),
 				# The x coord already preserves the color, so the y coord doesn't need to shift.
-				center.y)
-			# Move to the two light and dark squares nearest the origin.
-			(transformx, transformy) = (-(shiftedx // 2 * 2), -(shiftedy // 1))
+				-(center[1] // 1))
 			transformed = [(x + transformx, y + transformy) for (x, y) in quad]
 
-			angles = (math.atan2(y - center.y, x - center.x) for (x, y) in quad)
-			if debug:
+			angles = (math.atan2(y - center[1], x - center[0]) for (x, y) in quad)
+			if debug or True:
 				angles = list(angles)
 			# It is assumed the points are already listed counter-clockwise and their sequence should be preserved.
 			# If the homography inverted the orientation, then the error measurement will be high
@@ -608,7 +678,7 @@ def main():
 			# Each angle should be 90 degrees greater than the previous angle. All the angles will
 			# have the same bias (angular distance from the desired orientation) if the quad is a perfect square.
 			bias_angles = (angle + i * (math.pi/2.) for (i, angle) in enumerate(angles))
-			if debug:
+			if debug or True:
 				bias_angles = list(bias_angles)
 			average_bias_angle = math.atan2(
 				sum(math.sin(angle) for angle in bias_angles),
@@ -617,19 +687,27 @@ def main():
 			rotation = int(average_bias_angle / (math.pi/2.) + 2)
 			#print('rotation', rotation)
 			rotated = transformed[rotation:] + transformed[:rotation]
+
+			if tq is not None:
+				score = sum((td-rd)**2 for (rp, tp) in zip(rotated, tq) for (rd, td) in zip(rp, tp))
+				#if score > 2:
+				#	debug = True
+
 			if debug:
 				print('--------------------------------')
-				print('center', (center.x, center.y))
-				print('shifted', (shiftedx, shiftedy))
+				print('center', center)
+				#print('shifted', (shiftedx, shiftedy))
 				print('transform', (transformx, transformy))
-				print('new center', (center.x + transformx, center.y + transformy))
-				print('offsets', [(x - center.x, y - center.y) for (x, y) in quad])
+				print('new center', (center[0] + transformx, center[1] + transformy))
+				print('offsets', [(x - center[0], y - center[1]) for (x, y) in quad])
 				print('raw angles', [a / (math.pi/2.) for a in angles])
 				print('bias angles', [a / (math.pi/2.) for a in bias_angles])
 				print('average bias angle', average_bias_angle / (math.pi/2.))
 				print('rotation', rotation)
 				print('rotated from', transformed)
 				print('rotated to', rotated)
+				if center[0] + transformx >= 2:
+					print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
 			return rotated
 
 	# Change the shape to a list of quads.
@@ -641,7 +719,7 @@ def main():
 		min_samples=3,
 		residual_metric=lambda dy: numpy.sum(dy**2, axis=1),
 		#residual_threshold=1/8.,
-		residual_threshold=5,
+		#residual_threshold=5,
 	)
 	# RANSACRegressor expects the input to be an array of points.
 	# This target data is an array of quads instead, where each quad
@@ -738,7 +816,9 @@ def get_centroid (points):
 		given a list of points represented 
 		as 2-tuples, returns their centroid 
 	"""
-	return (numpy.mean([p[0] for p in points]), numpy.mean([p[1] for p in points]))
+	#return (numpy.mean([p[0] for p in points]), numpy.mean([p[1] for p in points]))
+	c = shapely.geometry.polygon.Polygon(points).centroid
+	return (c.x, c.y)
 
 
 if __name__ == "__main__":
