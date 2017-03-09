@@ -113,8 +113,8 @@ def main():
 			continue
 
 		# FIXME: Remove bookshelf contours
-		#if approx[0][0][1] < 300:
-		#	continue
+		if approx[0][0][1] < 300:
+			continue
 
 		# Dilate the contour
 		bg = numpy.zeros((color2.shape[0], color2.shape[1]), dtype=numpy.uint8)
@@ -384,13 +384,22 @@ def main():
 	class ChessboardPerspectiveEstimator(sklearn.base.BaseEstimator, sklearn.base.RegressorMixin):
 		def __init__(self):
 			self.homography_ = numpy.identity(3)
+			zoom_factor = min(color3.shape[0], color3.shape[1])
+			self.seed = numpy.array([[1., 0., 0.], [0., 1., 0.], [0., 0., zoom_factor / 8.]])
 			# FIXME: This starts out with a known good value.
+			#self.seed = Muntrans
 			self.homography_ = Muntrans
-			self.untrans_homography_ = Muntrans
 			#self.homography_ = invMout
-			#self.untrans_homography_ = invMout
+			#self.seed = invMout
 		def shape_homography(self, rotation):
-			return numpy.concatenate((rotation.reshape(3, 2), [[0.], [0.], [1.]]), axis=1)
+			if len(rotation) == 6:
+				return numpy.concatenate((numpy.array(rotation).reshape(3, 2), [[0.], [0.], [1.]]), axis=1)
+			elif len(rotation) == 4:
+				return numpy.concatenate((
+					numpy.concatenate((numpy.array(rotation).reshape(2, 2), [[0.], [0.]]), axis=1),
+					[[0., 0., 1.]]))
+			else:
+				raise RuntimeError('Invalid rotation')
 		def min_translation(self, true_centers, projected_centers):
 			# Shift every other row sideways, so all the like-colored squares line up.
 			shifted_centers = ((x + y % 2 // 1, y) for (x, y) in projected_centers)
@@ -433,7 +442,7 @@ def main():
 
 			transM = numpy.array([[1., 0., translation[0]], [0., 1., translation[1]], [0., 0., 1.]])
 			translatedM = numpy.dot(transM, rotation)
-			self.show_homography(sample_centers, true_centers, sample_quads, true_quads, translatedM)
+			#self.show_homography(sample_centers, true_centers, sample_quads, true_quads, translatedM, quick=True)
 
 
 			translated_centers = (projected_center + translation for projected_center in projected_centers)
@@ -448,7 +457,7 @@ def main():
 			translated_quads = list(translated_quads)
 			rotated_quads = (self.rotate_quad(quad) for quad in translated_quads)
 			rotated_quads = list(rotated_quads)
-			print('rotated', rotated_quads)
+			#print('rotated', rotated_quads)
 			#translated_quads = ([(x + translationx, y + translationy) for (x, y) in quad]
 			#	for ((translationx, translationy), quad) in zip(quad_translations, rotated_quads))
 
@@ -456,7 +465,7 @@ def main():
 				for (true_quad, translated_quad) in zip(true_quads, rotated_quads)
 				for (true_point, translated_point) in zip(true_quad, translated_quad))
 			offsets = list(offsets)
-			print('offsets', offsets)
+			#print('offsets', offsets)
 			distance = sum(dim**2 for offset in offsets for dim in offset)
 
 			#homography = numpy.append(x, [1]).reshape(3, 3)
@@ -469,12 +478,12 @@ def main():
 			#mod = ((x % 2, y % 1) for (x, y) in shifted)
 
 			#distance = sum(offset_x**2 + offset_y**2 for (offset_x, offset_y) in mod)
-			#print('distance', distance)
+			print('distance', distance)
 			return distance
 		def fit(self, X, y):
 			#print('fit', len(X))
 			#print('FIT', X, y)
-			scaled = self.untrans_homography_ / self.untrans_homography_[2][2]
+			scaled = self.seed / self.seed[2][2]
 			seed = numpy.array([cell for row in scaled for cell in row[:-1]])
 			sample_quads = [grouper(quad, 2) for quad in X]
 			#sample_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in sample_quads)
@@ -484,19 +493,36 @@ def main():
 			#true_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in true_quads)
 			#true_center_coords = [(point.x, point.y) for point in true_center_points]
 			true_center_coords = [get_centroid(quad) for quad in true_quads]
-			#print('basinhopping...')
-			#res = scipy.optimize.basinhopping(lambda x: self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads, x), seed)
+
+			#self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, self.seed)
+
+			print('optimizing...')
+			optimizer = lambda x: self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads, x)
+
+			#res = scipy.optimize.basinhopping(optimizer, seed, minimizer_kwargs={ 'method': 'L-BFGS-B', 'options': { 'ftol': 1e-2 } })
 			#if not res.lowest_optimization_result.success:
 			#	raise RuntimeError('solver failed: ' + res.lowest_optimization_result.message)
-			#print('basinhopping done')
 			#fitted = res.lowest_optimization_result.x
+
+			res = scipy.optimize.differential_evolution(optimizer, [(-1., 1) for s in seed[:4]])
+			if not res.success:
+				raise RuntimeError('solver failed: ' + res.message)
+			fitted = res.x
+
+			#res = scipy.optimize.root(optimizer, seed, method='lm')
+			#res = scipy.optimize.minimize(optimizer, seed, method='L-BFGS-B')
+			#if not res.success:
+			#	raise RuntimeError('solver failed: ' + res.message)
+			#fitted = res.x
+
+			print('optimization done')
 
 			# FIXME
 			# The translation had already been determined deep inside the objective function,
 			# but it was lost and needs to be recovered.
-			#rotation = self.shape_homography(fitted)
-			rotation = self.homography_
-			self.untrans_homography_ = rotation
+			rotation = self.shape_homography(fitted)
+			#rotation = self.homography_
+			#self.seed = rotation
 
 			projected_centers = cv2.perspectiveTransform(
 				numpy.array([sample_center_coords]).astype('float32'), rotation)[0]
@@ -509,6 +535,8 @@ def main():
 			#self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, rotation)
 
 			self.homography_ = numpy.dot(transM, rotation)
+			self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, self.homography_, quick=True)
+
 			#self.homography_ = numpy.linalg.inv(numpy.dot(numpy.linalg.inv(transM), numpy.linalg.inv(rotation)))
 
 
@@ -565,7 +593,7 @@ def main():
 			#key = cv2.waitKey(0)
 
 			return self
-		def show_homography(self, sample_center_coords, true_center_coords, sample_quads, true_quads, homography):
+		def show_homography(self, sample_center_coords, true_center_coords, sample_quads, true_quads, homography, quick=False):
 			# Move to a visible area of the image
 			projected_centers = cv2.perspectiveTransform(
 				numpy.array([sample_center_coords]).astype('float32'), homography)[0]
@@ -614,7 +642,7 @@ def main():
 				cv2.circle(overlay, (int(round(c[0])), int(round(c[1]))), 3, (0, 255, 0))
 
 			cv2.imshow(WINNAME, overlay)
-			key = cv2.waitKey(0)
+			key = cv2.waitKey(1 if quick else 0)
 
 			idealized = cv2.warpPerspective(color3,
 					zoomM,
