@@ -383,282 +383,140 @@ def main():
 	# FIXME: Discard any RANSAC sample sets where the furthest points are more than 9 units apart.
 	class ChessboardPerspectiveEstimator(sklearn.base.BaseEstimator, sklearn.base.RegressorMixin):
 		def __init__(self):
-			self.homography_ = numpy.identity(3)
-			zoom_factor = min(color3.shape[0], color3.shape[1])
-			self.seed = numpy.array([[1., 0., 0.], [0., 1., 0.], [0., 0., zoom_factor / 8.]])
-			# FIXME: This starts out with a known good value.
-			#self.seed = Muntrans
-			self.homography_ = Muntrans
-			#self.homography_ = invMout
-			#self.seed = invMout
-		def shape_homography(self, rotation):
-			if len(rotation) == 6:
-				return numpy.concatenate((numpy.array(rotation).reshape(3, 2), [[0.], [0.], [1.]]), axis=1)
-			elif len(rotation) == 4:
-				return numpy.concatenate((
-					numpy.concatenate((numpy.array(rotation).reshape(2, 2), [[0.], [0.]]), axis=1),
-					[[0., 0., 1.]]))
-			else:
-				raise RuntimeError('Invalid rotation')
-		def min_translation(self, true_centers, projected_centers):
-			# Shift every other row sideways, so all the like-colored squares line up.
-			shifted_centers = ((x + y % 2 // 1, y) for (x, y) in projected_centers)
-			offsets = ([sd - td for (sd, td) in zip(shifted_point, true_point)] for (shifted_point, true_point) in zip(shifted_centers, true_centers))
-			#offsets = list(offsets)
-			# We need the best translation that puts the points closest to true square points.
-			# The translation in each dimension can be calculated independently.
-			# It doesn't matter which square the points are near, so that means that modular arithmetic is needed.
-			# The offsets need to be brought as close as possible to any integral values.
-			# To do that, the points are translated to points on a unit circle and the average angle is computed.
-			angles = ((x * math.pi, y * math.pi*2) for (x, y) in offsets)
-			#angles = list(angles)
-			(anglesx, anglesy) = zip(*angles)
-			biasanglex = math.atan2(
-				sum(math.sin(angle) for angle in anglesx),
-				sum(math.cos(angle) for angle in anglesx))
-			biasangley = math.atan2(
-				sum(math.sin(angle) for angle in anglesy),
-				sum(math.cos(angle) for angle in anglesy))
-			biasx = biasanglex / math.pi
-			biasy = biasangley / (math.pi*2)
-			translation = [-biasx, -biasy]
-			#print('offsets', offsets)
-			#print('angles', angles)
-			#print('mod angles', [(x % (math.pi*2.), y % (math.pi*2.)) for (x,y) in angles])
-			#print('biasangle', (biasanglex, biasangley))
-			#print('min translation', translation)
-			#for (projected_point, true_point) in zip(projected_centers, true_centers):
-			#	print('    offset', projected_point[0] - true_point[0], '=>', projected_point[0] + translation[0] - true_point[0], (projected_point[0] + translation[0], projected_point[1] + translation[1]))
-			#print('new centers', [(x+translation[0], y+translation[1]) for (x, y) in offsets])
-			return translation
-		def objective(self, sample_centers, true_centers, sample_quads, true_quads, x):
-			#print('obj', x)
-			rotation = self.shape_homography(x)
-			projected_centers = cv2.perspectiveTransform(
-				numpy.array([sample_centers]).astype('float32'), rotation)[0]
-			projected_quads = cv2.perspectiveTransform(
-				numpy.array(sample_quads).astype('float32'), rotation)
-			translation = self.min_translation(true_centers, projected_centers)
+			self.seed = [color3.shape[1]/2., color3.shape[0]/2., float(color3.shape[1]), color3.shape[0]/2.]
+			self.vps = None
+		def segment_alignment_error(self, segment, vp, debug=False):
+			oriented = sorted(segment, key=lambda point: numpy.linalg.norm(point - vp), reverse=True)
+			(closer, further) = oriented
+			direction = closer - further
+			vanisher = vp - further
+			unit_vanisher = vanisher / numpy.linalg.norm(vanisher)
+			corrected = numpy.dot(direction, unit_vanisher) * unit_vanisher
+			distance = numpy.linalg.norm(corrected - direction)
+			if debug:
+				print('projecting', corrected, direction, vanisher)
+				print('correction', distance, list(closer), '=>', list(further + corrected))
+			return distance**2
+		def quad_alignment_error(self, quad, vp, debug=False):
+			return (self.segment_alignment_error(numpy.array(quad[:2]), vp, debug) +
+				self.segment_alignment_error(numpy.array(quad[2:]), vp, debug))
+			# TODO:
+			# Calculate the error due to the nearest point needing a shift so that
+			# the angle points exactly toward the vanishing point.
+			# Calculate the error due to the ratios not being equal:
+			#  The distance to the near point divided by the distance to the far point
+			#  should be equal for all lines of all quads to their respective vanishing points.
+			# Find a translation that matches all quads and calculate the error
+			# due to translating to a chess square of the correct color.
+			# In fit(), calculate the homography corresponding to those points.
+			# Alternatively, add a boolean to each quad to signify its color, then
+			# all y values can be zero, and the distance is returned by predict().
 
-			transM = numpy.array([[1., 0., translation[0]], [0., 1., translation[1]], [0., 0., 1.]])
-			translatedM = numpy.dot(transM, rotation)
-			#self.show_homography(sample_centers, true_centers, sample_quads, true_quads, translatedM, quick=True)
+			return distance
+		def quad_error(self, vps, quad):
+			(vp1, vp2) = vps
+			horizon = vp2 - vp1
+			unit_horizon = horizon / numpy.linalg.norm(horizon)
+			distance = 0.
+
+			projected_quad = []
+			for point in quad:
+				# Check which side of the horizon each point is on.
+				if numpy.linalg.det([horizon, point - vp1]) < 0:
+					# Move any points above the horizon directly onto the horizon
+					projection = numpy.dot(point - vp1, unit_horizon)
+					projected_point = vp1 + projection * unit_horizon
+					distance += numpy.linalg.norm(projected_point - point)**2
+				else:
+					projected_point = point
+				projected_quad.append(projected_point)
+
+			# Try both possible orientations of each quad
+			rotated_quad = projected_quad[1:] + projected_quad[:1]
+			#if (self.quad_alignment_error(projected_quad, vp1) + self.quad_alignment_error(rotated_quad, vp2) <
+			#	self.quad_alignment_error(rotated_quad, vp1) + self.quad_alignment_error(projected_quad, vp2)):
+			#	self.quad_alignment_error(projected_quad, vp1, debug=True)
+			#	self.quad_alignment_error(rotated_quad, vp2, debug=True)
+			#else:
+			#	self.quad_alignment_error(rotated_quad, vp1, debug=True)
+			#	self.quad_alignment_error(projected_quad, vp2, debug=True)
 
 
-			translated_centers = (projected_center + translation for projected_center in projected_centers)
-			translated_centers = list(translated_centers)
-			# Shift every other row sideways, so all the like-colored squares line up.
-			shifted_centers = ((x + y % 2 // 1, y) for (x, y) in translated_centers)
-			mod_centers = ((x % 2, y % 1) for (x, y) in shifted_centers)
-			quad_translations = (mod_center - projected_center
-				for (projected_center, mod_center) in zip(projected_centers, mod_centers))
+			distance += min(
+				self.quad_alignment_error(projected_quad, vp1) + self.quad_alignment_error(rotated_quad, vp2),
+				self.quad_alignment_error(rotated_quad, vp1) + self.quad_alignment_error(projected_quad, vp2))
 
-			translated_quads = ([[pd + td for (pd, td) in zip(point, translation)] for point in projected_quad] for projected_quad in projected_quads)
-			translated_quads = list(translated_quads)
-			rotated_quads = (self.rotate_quad(quad) for quad in translated_quads)
-			rotated_quads = list(rotated_quads)
-			#print('rotated', rotated_quads)
-			#translated_quads = ([(x + translationx, y + translationy) for (x, y) in quad]
-			#	for ((translationx, translationy), quad) in zip(quad_translations, rotated_quads))
+			#print('distance', distance)
+			return distance
 
-			offsets = ([true_dim - translated_dim for (true_dim, translated_dim) in zip(true_point, translated_point)]
-				for (true_quad, translated_quad) in zip(true_quads, rotated_quads)
-				for (true_point, translated_point) in zip(true_quad, translated_quad))
-			offsets = list(offsets)
-			#print('offsets', offsets)
-			distance = sum(dim**2 for offset in offsets for dim in offset)
+		def objective(self, sample_quads, x, wait=False):
+			(vp1, vp2) = vps = [numpy.array(vp) for vp in grouper(x, 2)]
+			#print('vp', vp1, vp2)
 
-			#homography = numpy.append(x, [1]).reshape(3, 3)
-			#projected_centers = cv2.perspectiveTransform(
-			#	numpy.array([sample_centers]).astype('float32'), homography)[0]
-			#offsets = (true_point - projected_point for (true_point, projected_point) in zip(true_centers, projected_centers))
-			# Shift every other row sideways, so all the like-colored squares line up.
+			distance = sum(self.quad_error(vps, quad) for quad in sample_quads)
 
-			#shifted = ((x + y % 2 // 1, y) for (x, y) in offsets)
-			#mod = ((x % 2, y % 1) for (x, y) in shifted)
+			#print('distance', distance)
 
-			#distance = sum(offset_x**2 + offset_y**2 for (offset_x, offset_y) in mod)
-			print('distance', distance)
+			#working = numpy.copy(color3)
+			#left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
+			#right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
+			#cv2.drawContours(working, numpy.array(sample_quads), -1, 255, 2)
+			#cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 0, 255))
+			#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+			#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+			#cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 0, 255))
+			#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			#cv2.imshow(WINNAME, working)
+			#key = cv2.waitKey(0 if wait else 1)
+
 			return distance
 		def fit(self, X, y):
-			#print('fit', len(X))
-			#print('FIT', X, y)
-			scaled = self.seed / self.seed[2][2]
-			seed = numpy.array([cell for row in scaled for cell in row[:-1]])
 			sample_quads = [grouper(quad, 2) for quad in X]
-			#sample_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in sample_quads)
-			#sample_center_coords = [(point.x, point.y) for point in sample_center_points]
-			sample_center_coords = [get_centroid(quad) for quad in sample_quads]
-			true_quads = [grouper(quad, 2) for quad in y]
-			#true_center_points = (shapely.geometry.polygon.Polygon(quad).representative_point() for quad in true_quads)
-			#true_center_coords = [(point.x, point.y) for point in true_center_points]
-			true_center_coords = [get_centroid(quad) for quad in true_quads]
-
-			#self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, self.seed)
 
 			print('optimizing...')
-			optimizer = lambda x: self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads, x)
+			optimizer = lambda x: self.objective(sample_quads, x)
 
-			#res = scipy.optimize.basinhopping(optimizer, seed, minimizer_kwargs={ 'method': 'L-BFGS-B', 'options': { 'ftol': 1e-2 } })
+			#res = scipy.optimize.basinhopping(optimizer, self.seed, minimizer_kwargs={ 'method': 'L-BFGS-B', 'options': { 'ftol': 1e-2 } })
 			#if not res.lowest_optimization_result.success:
 			#	raise RuntimeError('solver failed: ' + res.lowest_optimization_result.message)
 			#fitted = res.lowest_optimization_result.x
 
-			res = scipy.optimize.differential_evolution(optimizer, [(-1., 1) for s in seed[:4]])
-			if not res.success:
-				raise RuntimeError('solver failed: ' + res.message)
-			fitted = res.x
-
-			#res = scipy.optimize.root(optimizer, seed, method='lm')
-			#res = scipy.optimize.minimize(optimizer, seed, method='L-BFGS-B')
+			#res = scipy.optimize.differential_evolution(optimizer, [(-1., 1) for s in self.seed])
 			#if not res.success:
 			#	raise RuntimeError('solver failed: ' + res.message)
 			#fitted = res.x
 
+			#res = scipy.optimize.root(lambda x: [optimizer(x)] + [0]*(len(x)-1), self.seed, method='lm')
+			res = scipy.optimize.minimize(lambda x: optimizer(x), self.seed, method='L-BFGS-B')
+			if not res.success:
+				raise RuntimeError('solver failed: ' + res.message)
+			fitted = res.x
+			self.vps = numpy.array(grouper(fitted, 2))
+
 			print('optimization done')
+
+			(vp1, vp2) = (numpy.array(vp) for vp in grouper(fitted, 2))
+			working = numpy.copy(color3)
+			left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
+			right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
+			cv2.drawContours(working, numpy.array(sample_quads), -1, 255, 2)
+			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 0, 255))
+			cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+			cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 0, 255))
+			cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			cv2.imshow(WINNAME, working)
+			key = cv2.waitKey(1)
+
+			#print('comparison', self.objective(sample_quads, [360., 200., 6000., 240.], True))
 
 			# FIXME
 			# The translation had already been determined deep inside the objective function,
 			# but it was lost and needs to be recovered.
-			rotation = self.shape_homography(fitted)
-			#rotation = self.homography_
-			#self.seed = rotation
-
-			projected_centers = cv2.perspectiveTransform(
-				numpy.array([sample_center_coords]).astype('float32'), rotation)[0]
-			translation = self.min_translation(true_center_coords, projected_centers)
-			transM = numpy.array([[1., 0., translation[0]], [0., 1., translation[1]], [0., 0., 1.]])
-			#print('LAST')
-			#self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, self.homography_)
-
-			#print('ROTATION')
-			#self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, rotation)
-
-			self.homography_ = numpy.dot(transM, rotation)
-			self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, self.homography_, quick=True)
-
-			#self.homography_ = numpy.linalg.inv(numpy.dot(numpy.linalg.inv(transM), numpy.linalg.inv(rotation)))
-
-
-			projected_quads = cv2.perspectiveTransform(
-				numpy.array(sample_quads).astype('float32'), self.homography_)
-			for (pq, tq) in zip(projected_quads, true_quads):
-				rq = self.rotate_quad(pq, tq)
-				score = sum((td-rd)**2 for (rp, tp) in zip(rq, tq) for (rd, td) in zip(rp, tp))
-				print('quad score', score, rq, tq)
-
-			#print('sample', sample_center_coords)
-			#print('true', true_center_coords)
-			#print('scaled', scaled)
-			#self.homography_ = numpy.append(fitted, [1]).reshape(3, 3)
-			print('TRANSLATED')
-			# FIXME: In the objective function, the points should not be translated any more,
-			# and this score should exactly equal ROTATION above!
-
-			#self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, self.homography_)
-			Mtrans = numpy.copy(self.homography_)
-			t1 = - Mtrans[0][2] / Mtrans[2][2]
-			t2 = - Mtrans[1][2] / Mtrans[2][2]
-			untrans = numpy.array([
-				[1., 0., t1],
-				[0., 1., t2],
-				[0., 0., 1.],
-			])
-			#print('t', t1, t2)
-			Muntrans = numpy.dot(untrans, Mtrans)
-			Muntrans = Muntrans / Muntrans[2][2]
-			print('score', self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads,
-				numpy.array([cell for row in Muntrans for cell in row[:-1]])))
-
-
-			#doubletrans_sample_centers = [(x+translation[0], y+translation[1]) for (x,y) in sample_center_coords]
-			#doubletrans_projected_centers = cv2.perspectiveTransform(
-			#	numpy.array([doubletrans_sample_centers]).astype('float32'), rotation)[0]
-			#doubletranslation = self.min_translation(true_center_coords, doubletrans_projected_centers)
-			#doubletransM = numpy.array([[1., 0., doubletranslation[0]], [0., 1., doubletranslation[1]], [0., 0., 1.]])
-			#doubletrans = numpy.linalg.inv(numpy.dot(numpy.linalg.inv(doubletransM), numpy.linalg.inv(self.homography_)))
-			#print('DOUBLE TRANSLATED', doubletranslation)
-			#self.show_homography(sample_center_coords, true_center_coords, sample_quads, true_quads, doubletrans)
-
-
-			corners_vis = numpy.copy(color2)
-			for c in sample_center_coords:
-				#corners_img	[(int(round(c[1])), int(round(c[0])))] = 255
-				cv2.circle(corners_vis, (int(round(c[0])), int(round(c[1]))), 3, (0, 255, 0))
-			#cv2.imshow(WINNAME, corners_vis)
-			#key = cv2.waitKey(0)
-
-			#warped = cv2.warpPerspective(refimg, M, (color3.shape[1], color3.shape[0]))
-			#cv2.imshow(WINNAME, warped)
-			#key = cv2.waitKey(0)
 
 			return self
-		def show_homography(self, sample_center_coords, true_center_coords, sample_quads, true_quads, homography, quick=False):
-			# Move to a visible area of the image
-			projected_centers = cv2.perspectiveTransform(
-				numpy.array([sample_center_coords]).astype('float32'), homography)[0]
-			group_center_x = sum(x for (x, y) in projected_centers) / float(len(projected_centers))
-			group_center_y = sum(y for (x, y) in projected_centers) / float(len(projected_centers))
-			#print('group_center', group_center_x, group_center_y)
-			distance = (5. - group_center_x, 5. - group_center_y)
-			translation = (distance[0] // 2. * 2, distance[1] // 2. * 2)
-			#print('translation for show', translation)
-			transM = numpy.array([[1., 0., translation[0]], [0., 1., translation[1]], [0., 0., 1.]])
-			centeredM = numpy.dot(transM, homography)
-			scaled = centeredM / centeredM[2][2]
-
-			zoomM = numpy.dot(zoom_in, scaled)
-			reverseM = numpy.linalg.inv(zoomM)
-
-			Mtrans = numpy.copy(homography)
-			t1 = - Mtrans[0][2] / Mtrans[2][2]
-			t2 = - Mtrans[1][2] / Mtrans[2][2]
-			untrans = numpy.array([
-				[1., 0., t1],
-				[0., 1., t2],
-				[0., 0., 1.],
-			])
-			#print('t', t1, t2)
-			Muntrans = numpy.dot(untrans, Mtrans)
-				#print('score', self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads,
-			#	numpy.array([cell for row in Muntrans for cell in row[:-1]])))
-			warped = cv2.warpPerspective(refimg,
-					reverseM,
-					(color3.shape[1], color3.shape[0]))
-
-			flatmask = numpy.full(refimg.shape, 255, dtype=numpy.uint8)
-			warpedmask = cv2.warpPerspective(flatmask, reverseM, (color3.shape[1], color3.shape[0]))
-			maskidx = (warpedmask!=0)
-			overlay = numpy.copy(color3)
-			overlay[maskidx] = warped[maskidx]
-
-			#print('quads', sample_quads)
-			for quad in sample_quads:
-				contours = [numpy.array([[point] for point in quad]).astype('int')]
-				#cv2.drawContours(overlay, contours, -1, 255, cv2.FILLED)
-				cv2.drawContours(overlay, contours, -1, 255, 2)
-				#c = shapely.geometry.polygon.Polygon(quad).representative_point()
-				c = [sum(p[dim] for p in quad)/4. for dim in [0, 1]]
-				cv2.circle(overlay, (int(round(c[0])), int(round(c[1]))), 3, (0, 255, 0))
-
-			cv2.imshow(WINNAME, overlay)
-			key = cv2.waitKey(1 if quick else 0)
-
-			idealized = cv2.warpPerspective(color3,
-					zoomM,
-					(refimg.shape[1], refimg.shape[0]))
-			projected_quads = cv2.perspectiveTransform(
-				numpy.array(sample_quads).astype('float32'), zoomM)
-			for quad in projected_quads:
-				contours = [numpy.array([[point] for point in quad]).astype('int')]
-				cv2.drawContours(idealized, contours, -1, 255, 2)
-				#c = shapely.geometry.polygon.Polygon(quad).representative_point()
-				c = [sum(p[dim] for p in quad)/4. for dim in [0, 1]]
-				cv2.circle(idealized, (int(round(c[0])), int(round(c[1]))), 3, (0, 255, 0))
-	
-			#cv2.imshow(WINNAME, idealized)
-			#key = cv2.waitKey(0)
-
 		def score(self, X, y):
 			print('score')
 			s = super(ChessboardPerspectiveEstimator, self).score(X, y)
@@ -667,10 +525,7 @@ def main():
 		def predict(self, X):
 			print('predict')
 			quads = [grouper(quad, 2) for quad in X]
-			projected = cv2.perspectiveTransform(
-				numpy.array(quads).astype('float32'), self.homography_)
-			shifted = (self.rotate_quad(quad) for quad in projected)
-			predicted = [[dim for corner in quad for dim in corner] for quad in shifted]
+			predicted = [(self.quad_error(self.vps, quad),) for quad in quads]
 			#print('PREDICT', X, predicted)
 			return predicted
 		def rotate_quad(self, quad, tq=None, debug=False):
@@ -747,7 +602,7 @@ def main():
 		min_samples=3,
 		residual_metric=lambda dy: numpy.sum(dy**2, axis=1),
 		#residual_threshold=1/8.,
-		#residual_threshold=5,
+		residual_threshold=10.,
 	)
 	# RANSACRegressor expects the input to be an array of points.
 	# This target data is an array of quads instead, where each quad
@@ -756,8 +611,9 @@ def main():
 	target_pts = [[dim for corner in quad for dim in corner] for quad in quads]
 	dark_square = (0., 0., 0., 1., 1., 1., 1., 0.)
 	light_square = (1., 0., 1., 1., 2., 1., 2., 0.)
-	training_pts = [(light_square if i < len(goodd) else dark_square) for i in range(len(quads))]
+	training_pts = [(0,) for i in range(len(quads))]
 	regressor.fit(target_pts, training_pts)
+	# FIXME
 	M = numpy.linalg.inv(numpy.dot(zoom_in, regressor.estimator_.homography_))
 
 
