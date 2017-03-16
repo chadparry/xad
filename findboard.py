@@ -27,8 +27,8 @@ def main():
 	cv2.namedWindow(WINNAME)
 
 	#webcam = cv2.VideoCapture(0)
-	webcam = cv2.VideoCapture('/usr/local/src/CVChess/data/videos/1.mov')
-	#webcam = cv2.VideoCapture('idaho.webm')
+	#webcam = cv2.VideoCapture('/usr/local/src/CVChess/data/videos/1.mov')
+	webcam = cv2.VideoCapture('idaho.webm')
 	if not webcam.isOpened():
 		raise RuntimeError('Failed to open camera')
 
@@ -112,9 +112,9 @@ def main():
 		if cv2.contourArea(approx) < 40:
 			continue
 
-		# FIXME: Remove bookshelf contours
-		if approx[0][0][1] < 300:
-			continue
+		# Remove bookshelf contours
+		#if approx[0][0][1] < 300:
+		#	continue
 
 		# Dilate the contour
 		bg = numpy.zeros((color2.shape[0], color2.shape[1]), dtype=numpy.uint8)
@@ -176,227 +176,26 @@ def main():
 
 
 
-
-
-
-	# FIXME: Temp code to find chessboard corners
-
-	#cv2.imshow(WINNAME, img1)
-	#key = cv2.waitKey(0)
-	(found, corners) = cv2.findChessboardCorners(img1, pattern_size)
-	#print('chessboard', found, corners)
-	clus_corners = corners = [c[0] for c in corners]
-
-	def get_odd_corners(c):
-		#return [c[1], c[7], c[15], c[21]]
-		return [c[i] for i in xrange(1, len(c), 6)]
-	def get_even_corners(c):
-		#return [c[8], c[14], c[22], c[28]]
-		return [c[i] for i in xrange(2, len(c), 6)]
-	def get_corners(c):
-		#return get_odd_corners(c) + get_even_corners(c)
-		return c
-	corners_img = numpy.zeros(img1.shape, numpy.uint8)
-	corners_vis = numpy.copy(color2)
-	for c in get_corners(clus_corners):
-		#corners_img[(int(round(c[1])), int(round(c[0])))] = 255
-		cv2.circle(corners_vis, (int(round(c[0])), int(round(c[1]))), 3, (0, 255, 0))
-		pass
-	#corners_img[corners]= 255
-	#color2[corners]= 255
-
-
-
-
-	for c in ref_corners:
-		cv2.circle(refimg, (int(round(c[0])), int(round(c[1]))), 3, (0, 255, 0))
-		pass
-	#cv2.imshow(WINNAME, refimg)
-	#key = cv2.waitKey(0)
-
-	src_pts = numpy.float32([ pt for pt in get_corners(reversed(ref_corners)) ]).reshape(-1,1,2)
-	dst_pts = numpy.float32([ pt for pt in get_corners(clus_corners) ]).reshape(-1,1,2)
-
-
-	# Calibrate the camera.
-	obj_pts = numpy.array([[(p[0][0], p[0][1], 0) for p in src_pts]]).astype('float32')
-	#print(obj_pts)
-	img_pts = numpy.array([[p[0] for p in dst_pts]])
-	#print(img_pts)
-	h, w = color2.shape[:2]
-	#print('mtx', mtx)
-	#print('newmtx', newcameramtx)
-
-	f = max(w, h)
-	default_mtx = numpy.array([[f, 0, w/2], [0, f, h/2], [0, 0, 1]]).astype('float32')
-
-	#ret, rvec, tvec = cv2.solvePnP(obj_pts, img_pts, mtx, dist)
-	#ret, rvec, tvec = cv2.solvePnP(obj_pts, img_pts, mtx, None)
-	ret, rvec, tvec = cv2.solvePnP(obj_pts, img_pts, default_mtx, None)
-
-	mtx = default_mtx
-	dist = None
-
 	color3 = numpy.copy(color2)
+
 
 	# TODO: Once the board is found, use MSER to track it
 
-	# FIXME
-	# Use sklearn.linear_model.RANSACRegressor to determine outliers and
-	# scipy.optimize with method=lm (Levenberg-Marquardt algorithm)
-	# to fit the corners to a perspective.
-
-	M, hmask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-
-	class ChessboardProjectiveTransform(skimage.transform.ProjectiveTransform):
-		pass
-
-	points = [p for p in contour for contour in contours]
-	ideal_points = [numpy.array([(0, 0)]) for p in points]
-	#print(points)
-	#print(ideal_points)
-
-	src_input = numpy.array([p[0] for p in src_pts])
-	dst_input = numpy.array([p[0] for p in dst_pts])
-	#print(src_input)
-	#print(dst_input)
-	model, inliers = skimage.measure.ransac(
-		#(numpy.array(ideal_points), numpy.array(points)),
-		(src_input, dst_input),
-		ChessboardProjectiveTransform,
-		min_samples=10, residual_threshold=5, max_trials=500)
-
-
-
-	a = math.pi / 2.
-	rot90 = numpy.array([[math.cos(a), math.sin(a), 0.], [-math.sin(a), math.cos(a), 0.], [0., 0., 1.]])
-	M = numpy.dot(M, rot90)
-
-	#print('INLIERS', inliers)
-
-	#M = model.params
-	#ret, rvecs, tvecs, nor = cv2.decomposeHomographyMat(M, mtx)
-
-	#print('RVECS', rvecs)
-	#print('RVEC_OLD', rvec)
-	#print('TVECS', tvecs)
-	#print('TVEC_OLD', tvec)
-	#(rvec, tvec) = (rvecs[0][0], tvecs[0])
-
-	(rotationMatrix, jacobian) = cv2.Rodrigues(rvec)
-	#tempMat2 = rotationMatrix.inv() * tvec;
-	#tempMat = rotationMatrix.inv() * mtx.inv() * uvPoint;
-	#print("rotationMatrix", rotationMatrix)
-	#print("jacobian", jacobian)
-	#print("mtx", mtx)
-	#print("rvec", rvec)
-	#print("tvec", tvec)
-	invRotationMtx = numpy.linalg.inv(rotationMatrix)
-	invMtx = numpy.linalg.inv(mtx)
-
-	#points = numpy.array([[good[0][0][0].astype('float32')]])
-	#print('point', points[0][0])
-	#print('M', M)
-	invM = numpy.linalg.inv(M)
-	#print('invM', invM)
-	#print('projected', invRotationMtx * (invMtx * point - tvec))
-	#proj = cv2.perspectiveTransform(points, M)
-	#print('projected', proj[0][0])
-	#ret = cv2.perspectiveTransform(proj, invM)
-	#print('ret', ret[0][0])
-
-
-	#M[2][0] *= 10.
-	#M[2][1] *= 1.
-	#M[0][0] *= 10.
-	#M[0][2] += 10000.
-	#print('M', M)
-	for shift in xrange(-10000, 10000, 1000):
-		break
-		shiftM = numpy.copy(M)
-		shiftM[0][2] += shift
-		print('M', shift, shiftM)
-		warpedtest = cv2.warpPerspective(refimg, shiftM, (color2.shape[1], color2.shape[0]))
-		cv2.imshow(WINNAME, warpedtest)
-		key = cv2.waitKey(0)
-
-	#invM[2][0] *= 10.
-	#invM[2][1] *= 1.
-	a = 0.75
-	#invM = numpy.dot(numpy.array([[math.cos(a), -math.sin(a), 0], [math.sin(a), math.cos(a), 0], [0, 0, 1]]), invM)
-	#invM[0][1] *= 1.5
-	#invM[1][0] /= 1.5
-	last = 0
-	for shift in xrange(-500, 500, 50):
-		break
-		shiftM = numpy.copy(invM)
-		shiftM = numpy.dot(numpy.array([[1., 0., float(shift)], [0., 1., 0.], [0., 0., 1.]]), invM)
-		#print('M', shift, shiftM)
-
-		projected = cv2.perspectiveTransform(
-			numpy.array([src_pts[0]]).astype('float32'), shiftM)[0]
-		print('projected', projected[0][0], projected[0][0] - last)
-		last = projected[0][0]
-
-		warpedtest = cv2.warpPerspective(color2, shiftM, (refimg.shape[1], refimg.shape[0]))
-		cv2.imshow(WINNAME, warpedtest)
-		key = cv2.waitKey(250)
-
-	zoom_out = numpy.array([[0.01, 0., 0.], [0., 0.01, 0.], [0., 0., 1.]])
-	Mout = numpy.dot(zoom_out, M)
-	invMout = numpy.dot(zoom_out, invM)
-	warpedtest = cv2.warpPerspective(refimg, M, (color2.shape[1], color2.shape[0]))
-	#cv2.imshow(WINNAME, warpedtest)
-	#key = cv2.waitKey(0)
-
-	zoom_in = numpy.array([[100., 0., 0.], [0., 100., 0.], [0., 0., 1.]])
-	Min = numpy.dot(zoom_in, M)
-	invMin = numpy.dot(zoom_in, invM)
-
-	warpedtest = cv2.warpPerspective(color2, invMin, (refimg.shape[1], refimg.shape[0]))
-	warpedtest = cv2.warpPerspective(color2, invM, (8, 8))
-	#cv2.imshow(WINNAME, warpedtest)
-	#key = cv2.waitKey(0)
-
-
-	#ret, rvecs, tvecs, nor = cv2.decomposeHomographyMat(M, mtx)
-	#print('RVECS', rvecs)
-	#print('TVECS', tvecs)
-	#print('NOR', nor)
-
-	Mtrans = numpy.copy(invMout)
-	#Mtrans = Mtrans / Mtrans[2][2]
-	#print('M', Mtrans)
-	#t2 = (Mtrans[1][2] - Mtrans[1][0] * Mtrans[0][2] / Mtrans[0][0]) / (Mtrans[1][0] * Mtrans[0][1] / Mtrans[0][0] - Mtrans[1][1])
-	#t1 = - (Mtrans[0][1] * t2 + Mtrans[0][2]) / Mtrans[0][0]
-	t1 = - Mtrans[0][2] / Mtrans[2][2]
-	t2 = - Mtrans[1][2] / Mtrans[2][2]
-	untrans = numpy.array([
-		[1., 0., t1],
-		[0., 1., t2],
-		[0., 0., 1.],
-	])
-	#print('t', t1, t2)
-	Muntrans = numpy.dot(untrans, Mtrans)
-	#print('M-untrans', Muntrans)
 
 	# FIXME: Discard any RANSAC sample sets where the furthest points are more than 9 units apart.
 	class ChessboardPerspectiveEstimator(sklearn.base.BaseEstimator, sklearn.base.RegressorMixin):
-		def __init__(self):
-			self.seed = [color3.shape[1]/2., color3.shape[0]/2., float(color3.shape[1]), color3.shape[0]/2.]
+		def __init__(self, tol=math.pi/36000., shape=(1,1), seed=None):
+			self.set_params(tol=tol, shape=shape, seed=seed)
 			self.vps = None
 		def segment_alignment_error(self, segment, vp, debug=False):
 			oriented = sorted(segment, key=lambda point: numpy.linalg.norm(point - vp), reverse=True)
 			(closer, further) = oriented
 			direction = closer - further
 			vanisher = vp - further
-			unit_vanisher = vanisher / numpy.linalg.norm(vanisher)
-			corrected = numpy.dot(direction, unit_vanisher) * unit_vanisher
-			distance = numpy.linalg.norm(corrected - direction)
+			angle = angle_between(direction, vanisher)
 			if debug:
-				print('projecting', corrected, direction, vanisher)
-				print('correction', distance, list(closer), '=>', list(further + corrected))
-			return distance**2
+				print('angle', angle, list(direction), list(vanisher))
+			return abs(angle)
 		def quad_alignment_error(self, quad, vp, debug=False):
 			return (self.segment_alignment_error(numpy.array(quad[:2]), vp, debug) +
 				self.segment_alignment_error(numpy.array(quad[2:]), vp, debug))
@@ -416,7 +215,8 @@ def main():
 		def quad_error(self, vps, quad):
 			(vp1, vp2) = vps
 			horizon = vp2 - vp1
-			unit_horizon = horizon / numpy.linalg.norm(horizon)
+			horizon_norm = numpy.linalg.norm(horizon)
+			unit_horizon = horizon / horizon_norm if horizon_norm != 0. else numpy.zeros(horizon.shape)
 			distance = 0.
 
 			projected_quad = []
@@ -426,7 +226,10 @@ def main():
 					# Move any points above the horizon directly onto the horizon
 					projection = numpy.dot(point - vp1, unit_horizon)
 					projected_point = vp1 + projection * unit_horizon
-					distance += numpy.linalg.norm(projected_point - point)**2
+					# FIXME: This isn't the same scale as the angular error
+					adjustment = numpy.linalg.norm(projected_point - point)**2
+					#print('adjustment', adjustment)
+					distance += adjustment
 				else:
 					projected_point = point
 				projected_quad.append(projected_point)
@@ -454,27 +257,33 @@ def main():
 			#print('vp', vp1, vp2)
 
 			distance = sum(self.quad_error(vps, quad) for quad in sample_quads)
+			return distance
 
 			#print('distance', distance)
 
-			#working = numpy.copy(color3)
-			#left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
-			#right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
-			#cv2.drawContours(working, numpy.array(sample_quads), -1, 255, 2)
-			#cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 0, 255))
+			working = numpy.copy(color3)
+			left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
+			right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
+			cv2.drawContours(working, numpy.array(sample_quads), -1, 255, 2)
+			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
 			#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
 			#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-			#cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 0, 255))
+			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 			#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
 			#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			for quad in sample_quads:
+				for point in quad:
+					for vp in vps:
+						cv2.line(working, point, tuple(int(d) for d in vp), (0,0,255), 1)
+
 			#cv2.imshow(WINNAME, working)
-			#key = cv2.waitKey(0 if wait else 1)
+			#key = cv2.waitKey(1 if wait else 0)
 
 			return distance
 		def fit(self, X, y):
 			sample_quads = [grouper(quad, 2) for quad in X]
 
-			print('optimizing...')
+			#print('optimizing...')
 			optimizer = lambda x: self.objective(sample_quads, x)
 
 			#res = scipy.optimize.basinhopping(optimizer, self.seed, minimizer_kwargs={ 'method': 'L-BFGS-B', 'options': { 'ftol': 1e-2 } })
@@ -488,25 +297,38 @@ def main():
 			#fitted = res.x
 
 			#res = scipy.optimize.root(lambda x: [optimizer(x)] + [0]*(len(x)-1), self.seed, method='lm')
-			res = scipy.optimize.minimize(lambda x: optimizer(x), self.seed, method='L-BFGS-B')
+			tol = self.get_params()['tol']
+			provided_seed = self.get_params()['seed']
+			if provided_seed is None:
+				shape = self.get_params()['shape']
+				seed = [shape[1]/2., shape[0]/2., float(shape[1]), shape[0]/2.]
+			else:
+				seed = [dim for vp in provided_seed for dim in vp]
+
+			res = scipy.optimize.minimize(lambda x: optimizer(x), seed, method='L-BFGS-B', tol=tol)
 			if not res.success:
-				raise RuntimeError('solver failed: ' + res.message)
+				self.vps = None
+				return self
 			fitted = res.x
 			self.vps = numpy.array(grouper(fitted, 2))
 
-			print('optimization done')
+			#print('optimization done')
 
 			(vp1, vp2) = (numpy.array(vp) for vp in grouper(fitted, 2))
 			working = numpy.copy(color3)
 			left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
 			right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
 			cv2.drawContours(working, numpy.array(sample_quads), -1, 255, 2)
-			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 0, 255))
-			cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-			cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 0, 255))
-			cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-			cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+			#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+			#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+			#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			for quad in sample_quads:
+				for point in quad:
+					for vp in self.vps:
+						cv2.line(working, point, tuple(int(d) for d in vp), (0,0,255), 1)
 			cv2.imshow(WINNAME, working)
 			key = cv2.waitKey(1)
 
@@ -518,13 +340,15 @@ def main():
 
 			return self
 		def score(self, X, y):
-			print('score')
 			s = super(ChessboardPerspectiveEstimator, self).score(X, y)
+			#print('score', s)
 			#print('SCORE', X, y, s)
 			return s
 		def predict(self, X):
-			print('predict')
+			#print('predict')
 			quads = [grouper(quad, 2) for quad in X]
+			if self.vps is None:
+				return [float('inf') for quad in quads]
 			predicted = [(self.quad_error(self.vps, quad),) for quad in quads]
 			#print('PREDICT', X, predicted)
 			return predicted
@@ -597,24 +421,95 @@ def main():
 	# Currently each square is 100 pixels per size, so normalize it down to unit squares.
 	#quads = [[[dim / 100. for dim in corner[0]] for corner in quad] for quad in good]
 	quads = [[[dim for dim in corner[0]] for corner in quad] for quad in good]
+	threshold = sum((dim/16.)**2 for dim in color3.shape[0:2])
+	#print('thresh', threshold)
+	visible_squares_estimate = 8 * 8 / 4
+	success_rate = 0.999999
+	retries = int(math.ceil(math.log(1 - success_rate, 1 - visible_squares_estimate / float(len(quads)))))
+	while retries > 0:
+		regressor = sklearn.linear_model.RANSACRegressor(
+			base_estimator=ChessboardPerspectiveEstimator(tol=math.pi/360., shape=color3.shape),
+			min_samples=3,
+			residual_metric=lambda dy: numpy.sum(dy**2, axis=1),
+			# Each segment has only 3 degrees of allowed error on average.
+			residual_threshold=math.pi/15.,
+			#residual_threshold=threshold,
+			max_trials=retries,
+		)
+		#regressor.get_params()['base_estimator'].set_params(tol=math.pi/360., shape=color3.shape)
+		# RANSACRegressor expects the input to be an array of points.
+		# This target data is an array of quads instead, where each quad
+		# contains 4 points. The translation is done by passing all 4 2-D
+		# points as if they were a single 8-dimensional point.
+		target_pts = [[dim for corner in quad for dim in corner] for quad in quads]
+		dark_square = (0., 0., 0., 1., 1., 1., 1., 0.)
+		light_square = (1., 0., 1., 1., 2., 1., 2., 0.)
+		training_pts = [(0,) for i in range(len(quads))]
+		try:
+			regressor.fit(target_pts, training_pts)
+			break
+		except ValueError as e:
+			print('Failed regression', e)
+		finally:
+			retries -= regressor.n_trials_
+
+	(vp1, vp2) = regressor.estimator_.vps
+	working = numpy.copy(color3)
+	left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
+	right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
+	inlier_quads = [quad for (quad, mask) in zip(quads, regressor.inlier_mask_) if mask]	
+	#print('vps', tuple(vp1), tuple(vp2))
+	#print('quads', inlier_quads)
+	cv2.drawContours(working, numpy.array(inlier_quads), -1, 255, 2)
+	cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+	#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+	#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+	cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+	#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+	#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+	for quad in inlier_quads:
+		for point in quad:
+			for vp in [vp1, vp2]:
+				cv2.line(working, tuple(point), tuple(int(d) for d in vp), (0,0,255), 1)
+	cv2.imshow(WINNAME, working)
+	key = cv2.waitKey(1)
+
+
+	# Run it again on the inliers with higher precision
 	regressor = sklearn.linear_model.RANSACRegressor(
-		base_estimator=ChessboardPerspectiveEstimator(),
-		min_samples=3,
+		base_estimator=ChessboardPerspectiveEstimator(tol=math.pi/360000., shape=color3.shape, seed=(vp1, vp2)),
 		residual_metric=lambda dy: numpy.sum(dy**2, axis=1),
-		#residual_threshold=1/8.,
-		residual_threshold=10.,
+		# Each segment has only 3 degrees of allowed error on average.
+		residual_threshold=math.pi/15.,
+		#residual_threshold=threshold,
 	)
-	# RANSACRegressor expects the input to be an array of points.
-	# This target data is an array of quads instead, where each quad
-	# contains 4 points. The translation is done by passing all 4 2-D
-	# points as if they were a single 8-dimensional point.
-	target_pts = [[dim for corner in quad for dim in corner] for quad in quads]
-	dark_square = (0., 0., 0., 1., 1., 1., 1., 0.)
-	light_square = (1., 0., 1., 1., 2., 1., 2., 0.)
-	training_pts = [(0,) for i in range(len(quads))]
+	target_pts = [[dim for corner in quad for dim in corner] for quad in inlier_quads]
+	training_pts = [(0,) for i in range(len(inlier_quads))]
 	regressor.fit(target_pts, training_pts)
-	# FIXME
-	M = numpy.linalg.inv(numpy.dot(zoom_in, regressor.estimator_.homography_))
+
+	(vp1, vp2) = regressor.estimator_.vps
+	working = numpy.copy(color3)
+	left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
+	right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
+	inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]	
+	print('vps', tuple(vp1), tuple(vp2))
+	#print('quads', inlier_quads)
+	cv2.drawContours(working, numpy.array(inlier_quads), -1, 255, 2)
+	cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+	#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+	#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+	cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+	#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+	#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+	for quad in inlier_quads:
+		for point in quad:
+			for vp in [vp1, vp2]:
+				cv2.line(working, tuple(point), tuple(int(d) for d in vp), (0,0,255), 1)
+	cv2.imshow(WINNAME, working)
+	key = cv2.waitKey(0)
+
+	
+	return
 
 
 
@@ -703,6 +598,16 @@ def get_centroid (points):
 	#return (numpy.mean([p[0] for p in points]), numpy.mean([p[1] for p in points]))
 	c = shapely.geometry.polygon.Polygon(points).centroid
 	return (c.x, c.y)
+
+
+def angle_between(v1, v2):
+	v1_norm = numpy.linalg.norm(v1)
+	v2_norm = numpy.linalg.norm(v2)
+	if v1_norm == 0. or v2_norm == 0:
+		return 0.
+	angle = numpy.arccos(numpy.clip(numpy.dot(v1 / v1_norm, v2 / v2_norm), -1., 1.))
+	# Shift the range from [0, pi) to [-pi/2, pi/2)
+	return (angle + math.pi/2.) % math.pi - math.pi/2.
 
 
 if __name__ == "__main__":
