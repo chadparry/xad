@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import collections
 import colorsys
 import cv2
 import itertools
@@ -7,6 +8,7 @@ import math
 import numpy
 import random
 import scipy.optimize
+import scipy.spatial
 import shapely.geometry.polygon
 import skimage.measure
 import skimage.transform
@@ -27,8 +29,8 @@ def main():
 	cv2.namedWindow(WINNAME)
 
 	#webcam = cv2.VideoCapture(0)
-	#webcam = cv2.VideoCapture('/usr/local/src/CVChess/data/videos/1.mov')
-	webcam = cv2.VideoCapture('idaho.webm')
+	webcam = cv2.VideoCapture('/usr/local/src/CVChess/data/videos/1.mov')
+	#webcam = cv2.VideoCapture('idaho.webm')
 	if not webcam.isOpened():
 		raise RuntimeError('Failed to open camera')
 
@@ -72,39 +74,61 @@ def main():
 	#key = cv2.waitKey(0)
 
 	# For finding dark squares
-	kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,5))
+	kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(4,4))
 	dilated = cv2.dilate(thresh, kernel)
 	# For finding light squares
-	kernel = numpy.ones((3,5),numpy.uint8)
 	eroded = cv2.erode(thresh, kernel)
 	#cv2.imshow(WINNAME, dilated)
 	#key = cv2.waitKey(0)
 	#cv2.imshow(WINNAME, eroded)
 	#key = cv2.waitKey(0)
 
+	# FIXME: findChessboardCorners draws a rectangle around the outer edge,
+	# so that clipped corners have a chance of being recognized.
 
 	im2, contoursd, hierarchy = cv2.findContours(dilated,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
 	ime2, contourse, hierarchy = cv2.findContours(eroded,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
-	contours = contoursd + contourse
+
+	contoursd_rev = [numpy.array(list(reversed(contour))) for contour in contoursd]
+
+	contours = contoursd_rev + contourse
 	#print('contours', len(contoursd), len(contourse), len(contours))
 
+	approxes = []
 	good = []
 	goodd = []
 	goode = []
+	oldgood = []
+	oldgoodd = []
+	oldgoode = []
+	kernel_cloud = [(kpx - kernel.shape[0]/2, kpy - kernel.shape[1]/2)	
+		for kpx in range(kernel.shape[0]) for kpy in range(kernel.shape[1])
+		if kernel[(kpx,kpy)]]
+	kernel_hull = [p[0] for p in cv2.convexHull(numpy.array(kernel_cloud))]
+
+	#print('kernel_cloud', kernel_cloud)
 	for (idx, contour) in enumerate(contours):
-		perimeter = cv2.arcLength(contour, True)
+		if len(contour) < 4:
+			continue
+		perimeter = cv2.arcLength(contour, closed=True)
+		# FIXME: The findChessboardCorners utility tries multiple thresholds between 1 and 7,
+		# and for each one it does two passes.
 		if len(contour) > 4:
 			approx = cv2.approxPolyDP(contour, perimeter/20, True)
 		elif len(contour) == 4:
 			approx = contour
 		else:
 			continue
+		approx = numpy.squeeze(approx)
 
 		#if len(approx) > 4:
 		#	approx = cv2.approxPolyDP(approx, 5, True)
 		if len(approx) != 4:
 			continue
 			pass
+		# Any negative-oriented (clockwise) contours are rejected.
+		if numpy.cross(approx[1] - approx[0], approx[2] - approx[1]) >= 0:
+			continue
 		if not cv2.isContourConvex(approx):
 			continue
 		#if cv2.arcLength(approx,True) < 50:
@@ -115,6 +139,51 @@ def main():
 		# Remove bookshelf contours
 		#if approx[0][0][1] < 300:
 		#	continue
+
+		approxes.append(approx)
+
+		dilated_segments = []
+		# FIXME: This loop is even slower than running drawContours and findContours below
+		for segment_idx in range(len(approx)):
+			#print('-----------------')
+			#print('kernel', kernel_hull)
+			segment = numpy.array([approx[segment_idx], approx[(segment_idx + 1) % len(approx)]])
+			segment_vector = segment[1] - segment[0]
+			segment_unit = segment_vector / numpy.linalg.norm(segment_vector)
+
+			#print('segment', segment_vector)
+			rejection_vectors = (numpy.dot(kp, segment_unit) * segment_unit - kp
+				for kp in kernel_hull)
+			#print('segment', segment_vector, segment_unit)
+			#print('rejections', zip(rejection_vectors, kernel_hull))
+			offset = max(rejection_vectors, key=lambda rv: numpy.cross(segment_vector, rv))
+			#print('offset', offset)
+			dilated_segment = [p + offset for p in segment]
+			#print('dilated_segment', dilated_segment)
+			dilated_segments.append(dilated_segment)
+
+		dilated_contour = []
+		for segment_idx in range(len(dilated_segments)):
+			segment = dilated_segments[segment_idx]
+			next_segment = dilated_segments[(segment_idx + 1) % len(dilated_segments)]
+			intersection = line_intersection(segment, next_segment)
+			#print('intersection', intersection)
+			dilated_contour.append(intersection)
+		#print('contour', dilated_contour)
+		# FIXME: Don't round here.
+
+		dilated_contour_array = numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
+			for (x,y) in dilated_contour])
+
+		good.append(dilated_contour_array)
+		if idx < len(contoursd):
+			goodd.append(dilated_contour_array)
+		else:
+			goode.append(dilated_contour_array)
+
+		continue
+
+		#print([tuple(cp[0])  for cp in contour], '=>', dilated_segments)
 
 		# Dilate the contour
 		bg = numpy.zeros((color2.shape[0], color2.shape[1]), dtype=numpy.uint8)
@@ -136,32 +205,46 @@ def main():
 
 		# FIXME: Find sub-pixel position of these corners.
 
-		good.append(contoursa1)
+		oldgood.append(contoursa1)
 		if idx < len(contoursd):
-			goodd.append(contoursa1)
+			oldgoodd.append(contoursa1)
 		else:
-			goode.append(contoursa1)
-	#print('good', len(goodd), len(goode), len(good))
+			oldgoode.append(contoursa1)
+
+	tree = scipy.spatial.KDTree([corner for contour in good for corner in contour])
+	pairs = tree.query_pairs(2.)
+	#print('pairs', pairs)
+	connected_indices = set()
+	for pair in pairs:
+		for point_idx in pair:
+			connected_indices.add(point_idx // 4)
+	connected = [good[idx] for idx in connected_indices]
+	good = connected
 
 	contcorners = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
-	contlines = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
+	contlines = numpy.zeros((color2.shape[0], color2.shape[1], 3), numpy.uint8)
 	contlinesd = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
 	contlinese = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
+	#for (idx, contour) in reversed(list(enumerate(approxes))):
+	#	cv2.drawContours(contlines, [contour], -1, (0, 255, 0), 1)
+	#for (idx, contour) in reversed(list(enumerate(oldgood))):
+	#	cv2.drawContours(contlines, [contour], -1, (255, 0, 0), 1)
 	for (idx, contour) in reversed(list(enumerate(good))):
 		#color = [a*256 for a in colorsys.hsv_to_rgb(random.random(), 0.75, 1)]
 		color = (255, 0, 0)
 		#cv2.drawContours(color1, [contour], -1, color, cv2.FILLED)
+		#print('contour', contour)
 		cv2.drawContours(color1, [contour], -1, color, 2)
-		cv2.drawContours(contlines, [contour], -1, 255, 1)
+		cv2.drawContours(contlines, [contour], -1, (0, 0, 255), 1)
 		if idx < len(goodd):
 			cv2.drawContours(contlinesd, [contour], -1, 255, 1)
 		else:
 			cv2.drawContours(contlinese, [contour], -1, 255, 1)
 		for cr in contour:
-			if contcorners[(cr[0][1], cr[0][0])]:
+			if contcorners[(cr[1], cr[0])]:
 				#print('clobbered corner')
 				pass
-			contcorners[(cr[0][1], cr[0][0])] = 255
+			contcorners[(cr[1], cr[0])] = 255
 		#print('area', cv2.contourArea(contour))
 		#cv2.imshow(WINNAME, color1)
 		#key = cv2.waitKey(0)
@@ -171,9 +254,8 @@ def main():
 	#cv2.imshow(WINNAME, contlinese)
 	#key = cv2.waitKey(0)
 
-	#cv2.imshow(WINNAME, contlines)
-	#key = cv2.waitKey(0)
-
+	cv2.imshow(WINNAME, contlines)
+	key = cv2.waitKey(0)
 
 
 	color3 = numpy.copy(color2)
@@ -420,7 +502,7 @@ def main():
 	# Change the shape to a list of quads.
 	# Currently each square is 100 pixels per size, so normalize it down to unit squares.
 	#quads = [[[dim / 100. for dim in corner[0]] for corner in quad] for quad in good]
-	quads = [[[dim for dim in corner[0]] for corner in quad] for quad in good]
+	quads = good
 	threshold = sum((dim/16.)**2 for dim in color3.shape[0:2])
 	#print('thresh', threshold)
 	visible_squares_estimate = 8 * 8 / 4
@@ -457,7 +539,7 @@ def main():
 	working = numpy.copy(color3)
 	left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
 	right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
-	inlier_quads = [quad for (quad, mask) in zip(quads, regressor.inlier_mask_) if mask]	
+	inlier_quads = [quad for (quad, mask) in zip(quads, regressor.inlier_mask_) if mask]
 	#print('vps', tuple(vp1), tuple(vp2))
 	#print('quads', inlier_quads)
 	cv2.drawContours(working, numpy.array(inlier_quads), -1, 255, 2)
@@ -491,7 +573,7 @@ def main():
 	working = numpy.copy(color3)
 	left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
 	right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
-	inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]	
+	inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]
 	print('vps', tuple(vp1), tuple(vp2))
 	#print('quads', inlier_quads)
 	cv2.drawContours(working, numpy.array(inlier_quads), -1, 255, 2)
@@ -508,7 +590,7 @@ def main():
 	cv2.imshow(WINNAME, working)
 	key = cv2.waitKey(0)
 
-	
+
 	return
 
 
@@ -608,6 +690,17 @@ def angle_between(v1, v2):
 	angle = numpy.arccos(numpy.clip(numpy.dot(v1 / v1_norm, v2 / v2_norm), -1., 1.))
 	# Shift the range from [0, pi) to [-pi/2, pi/2)
 	return (angle + math.pi/2.) % math.pi - math.pi/2.
+
+
+def line_intersection(a, b):
+	((a1, a2), (b1, b2)) = (a, b)
+	da = a2 - a1
+	db = b2 - b1
+	dp = a1 - b1
+	dap = (-da[1], da[0])
+	denom = numpy.dot(dap, db)
+	num = numpy.dot(dap, dp)
+	return (num / denom.astype(float))*db + b1
 
 
 if __name__ == "__main__":
