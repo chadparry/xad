@@ -69,36 +69,40 @@ def main():
 	#key = cv2.waitKey(0)
 
 	#ret,thresh = cv2.threshold(img1,127,255,0)
-	# FIXME: Try multiple block sizes and keep a union of the quads
-	thresh = cv2.adaptiveThreshold(img1,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,63,0)
-	#cv2.imshow(WINNAME, thresh)
-	#key = cv2.waitKey(0)
+	contours = []
+	for block_size in (2**exp - 1 for exp in itertools.count(4)):
+		if block_size * 2 >= min(img1.shape[0:2]):
+			break
+		thresh = cv2.adaptiveThreshold(img1,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,block_size,0)
+		#cv2.imshow(WINNAME, thresh)
+		#key = cv2.waitKey(0)
 
-	# For finding dark squares
-	kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(4,4))
-	dilated = cv2.dilate(thresh, kernel)
-	# For finding light squares
-	eroded = cv2.erode(thresh, kernel)
-	#cv2.imshow(WINNAME, dilated)
-	#key = cv2.waitKey(0)
-	#cv2.imshow(WINNAME, eroded)
-	#key = cv2.waitKey(0)
+		# For finding dark squares
+		kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(4,4))
+		dilated = cv2.dilate(thresh, kernel)
+		# For finding light squares
+		eroded = cv2.erode(thresh, kernel)
+		#cv2.imshow(WINNAME, dilated)
+		#key = cv2.waitKey(0)
+		#cv2.imshow(WINNAME, eroded)
+		#key = cv2.waitKey(0)
 
-	# FIXME: findChessboardCorners draws a rectangle around the outer edge,
-	# so that clipped corners have a chance of being recognized.
+		# FIXME: findChessboardCorners draws a rectangle around the outer edge,
+		# so that clipped corners have a chance of being recognized.
 
-	im2, contoursd, hierarchy = cv2.findContours(dilated,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
-	ime2, contourse, hierarchy = cv2.findContours(eroded,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+		im2, contoursd, hierarchy = cv2.findContours(dilated,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+		ime2, contourse, hierarchy = cv2.findContours(eroded,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
 
-	contoursd_rev = [numpy.array(list(reversed(contour))) for contour in contoursd]
+		contoursd_rev = [numpy.array(list(reversed(contour))) for contour in contoursd]
 
-	contours = contoursd_rev + contourse
+		contours.extend(contoursd_rev)
+		contours.extend(contourse)
 	#print('contours', len(contoursd), len(contourse), len(contours))
 
-	cimg = numpy.copy(thresh)
-	cv2.drawContours(cimg, numpy.array(contours), -1, 255, 1)
-	cv2.imshow(WINNAME, cimg)
-	key = cv2.waitKey(0)
+	#print('BEFORE', len(contours))
+	#print('during', [tuple(tuple(p[0]) for p in contour) for contour in contours])
+	#print('AFTER', len(set(tuple(tuple(p[0]) for p in contour) for contour in contours)))
+	#contours = list(set(tuple(tuple(p[0]) for p in contour) for contour in contours))
 
 	approxes = []
 	good = []
@@ -114,6 +118,7 @@ def main():
 
 	#print('kernel_cloud', kernel_cloud)
 	for (idx, contour) in enumerate(contours):
+		#	contour = numpy.array([[p] for p in contour])
 		if len(contour) < 4:
 			continue
 		perimeter = cv2.arcLength(contour, closed=True)
@@ -148,6 +153,23 @@ def main():
 
 		approxes.append(approx)
 
+	# Filter out duplicate quads
+	tree = scipy.spatial.KDTree([corner for contour in approxes for corner in contour])
+	pairs = tree.query_pairs(1.)
+	#print('pairs', pairs)
+	connected_indices = collections.defaultdict(lambda: collections.defaultdict(int))
+	for pair in pairs:
+		connected = set(point_idx // 4 for point_idx in pair)
+		for (left, right) in itertools.product(connected, repeat=2):
+			if left != right:
+				connected_indices[left][right] += 1
+	connected = [approxes[left_idx] for (left_idx, right_counts) in connected_indices.iteritems()
+		# If two quads overlap on 3 or more sides, then discard the one that was found
+		# first, which is the one found in the noiser image with the smaller block size.
+		if all(right_idx < left_idx or right_count < 3 for (right_idx, right_count) in right_counts.iteritems())]
+	approxes = connected
+
+	for approx in approxes:
 		dilated_segments = []
 		# FIXME: This loop is even slower than running drawContours and findContours below
 		for segment_idx in range(len(approx)):
@@ -182,11 +204,6 @@ def main():
 			for (x,y) in dilated_contour])
 
 		good.append(dilated_contour_array)
-		if idx < len(contoursd):
-			goodd.append(dilated_contour_array)
-		else:
-			goode.append(dilated_contour_array)
-
 		continue
 
 		#print([tuple(cp[0])  for cp in contour], '=>', dilated_segments)
@@ -217,17 +234,7 @@ def main():
 		else:
 			oldgoode.append(contoursa1)
 
-	tree = scipy.spatial.KDTree([corner for contour in good for corner in contour])
-	pairs = tree.query_pairs(2.)
-	#print('pairs', pairs)
-	connected_indices = set()
-	for pair in pairs:
-		connected = set(point_idx // 4 for point_idx in pair)
-		# Ignore contours that are only coincident with themselves
-		if len(connected) > 1:
-			connected_indices.update(connected)
-	connected = [good[idx] for idx in connected_indices]
-	good = connected
+	#print('GOOD', len(good))
 
 	contcorners = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
 	contlines = numpy.zeros((color2.shape[0], color2.shape[1], 3), numpy.uint8)
@@ -587,7 +594,7 @@ def main():
 	right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
 	inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]
 	print('vps', tuple(vp1), tuple(vp2))
-	#print('quads', inlier_quads)
+	print('quads', len(inlier_quads))
 	cv2.drawContours(working, numpy.array(inlier_quads), -1, 255, 2)
 	cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
 	#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
@@ -603,7 +610,6 @@ def main():
 	key = cv2.waitKey(1)
 
 
-	print('inliers', len(inlier_quads))
 	return
 
 
