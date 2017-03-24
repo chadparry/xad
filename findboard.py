@@ -35,7 +35,7 @@ def main():
 		raise RuntimeError('Failed to open camera')
 
 	[webcam.read() for i in range(10)]
-	#[webcam.read() for i in range(500)]
+	#[webcam.read() for i in range(1500)]
 
 	if True:
 		pattern_size = (7, 7)
@@ -69,7 +69,8 @@ def main():
 	#key = cv2.waitKey(0)
 
 	#ret,thresh = cv2.threshold(img1,127,255,0)
-	thresh = cv2.adaptiveThreshold(img1,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,101,0)
+	# FIXME: Try multiple block sizes and keep a union of the quads
+	thresh = cv2.adaptiveThreshold(img1,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,63,0)
 	#cv2.imshow(WINNAME, thresh)
 	#key = cv2.waitKey(0)
 
@@ -93,6 +94,11 @@ def main():
 
 	contours = contoursd_rev + contourse
 	#print('contours', len(contoursd), len(contourse), len(contours))
+
+	cimg = numpy.copy(thresh)
+	cv2.drawContours(cimg, numpy.array(contours), -1, 255, 1)
+	cv2.imshow(WINNAME, cimg)
+	key = cv2.waitKey(0)
 
 	approxes = []
 	good = []
@@ -216,8 +222,10 @@ def main():
 	#print('pairs', pairs)
 	connected_indices = set()
 	for pair in pairs:
-		for point_idx in pair:
-			connected_indices.add(point_idx // 4)
+		connected = set(point_idx // 4 for point_idx in pair)
+		# Ignore contours that are only coincident with themselves
+		if len(connected) > 1:
+			connected_indices.update(connected)
 	connected = [good[idx] for idx in connected_indices]
 	good = connected
 
@@ -254,8 +262,8 @@ def main():
 	#cv2.imshow(WINNAME, contlinese)
 	#key = cv2.waitKey(0)
 
-	cv2.imshow(WINNAME, contlines)
-	key = cv2.waitKey(0)
+	#cv2.imshow(WINNAME, contlines)
+	#key = cv2.waitKey(0)
 
 
 	color3 = numpy.copy(color2)
@@ -503,11 +511,14 @@ def main():
 	# Currently each square is 100 pixels per size, so normalize it down to unit squares.
 	#quads = [[[dim / 100. for dim in corner[0]] for corner in quad] for quad in good]
 	quads = good
+	if len(quads) < 3:
+		raise RuntimeError('Not enough quads found')
 	threshold = sum((dim/16.)**2 for dim in color3.shape[0:2])
 	#print('thresh', threshold)
 	visible_squares_estimate = 8 * 8 / 4
 	success_rate = 0.999999
-	retries = int(math.ceil(math.log(1 - success_rate, 1 - visible_squares_estimate / float(len(quads)))))
+	retries = int(math.ceil(math.log(1 - success_rate,
+		max(0.5, 1 - visible_squares_estimate / float(len(quads))))))
 	while retries > 0:
 		regressor = sklearn.linear_model.RANSACRegressor(
 			base_estimator=ChessboardPerspectiveEstimator(tol=math.pi/360., shape=color3.shape),
@@ -564,6 +575,7 @@ def main():
 		# Each segment has only 3 degrees of allowed error on average.
 		residual_threshold=math.pi/15.,
 		#residual_threshold=threshold,
+		min_samples=3,
 	)
 	target_pts = [[dim for corner in quad for dim in corner] for quad in inlier_quads]
 	training_pts = [(0,) for i in range(len(inlier_quads))]
@@ -588,9 +600,10 @@ def main():
 			for vp in [vp1, vp2]:
 				cv2.line(working, tuple(point), tuple(int(d) for d in vp), (0,0,255), 1)
 	cv2.imshow(WINNAME, working)
-	key = cv2.waitKey(0)
+	key = cv2.waitKey(1)
 
 
+	print('inliers', len(inlier_quads))
 	return
 
 
