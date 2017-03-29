@@ -70,7 +70,12 @@ def main():
 
 	#ret,thresh = cv2.threshold(img1,127,255,0)
 	contours = []
-	for block_size in (2**exp - 1 for exp in itertools.count(4)):
+	# Start off with the largest reasonable block size, which should be near the smallest
+	# possible dimension that four chessboard squares could have. That way, at the edge
+	# of the board, the block size could still encompass the two nearest ranks or files.
+	# This loop starts with a block size of 31, meaning that each square is expected to be
+	# at least 8 pixels high.
+	for block_size in (2**exp - 1 for exp in itertools.count(5)):
 		if block_size * 2 >= min(img1.shape[0:2]):
 			break
 		thresh = cv2.adaptiveThreshold(img1,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,block_size,0)
@@ -97,12 +102,7 @@ def main():
 
 		contours.extend(contoursd_rev)
 		contours.extend(contourse)
-	#print('contours', len(contoursd), len(contourse), len(contours))
-
-	#print('BEFORE', len(contours))
-	#print('during', [tuple(tuple(p[0]) for p in contour) for contour in contours])
-	#print('AFTER', len(set(tuple(tuple(p[0]) for p in contour) for contour in contours)))
-	#contours = list(set(tuple(tuple(p[0]) for p in contour) for contour in contours))
+	#print('contours', len(contours))
 
 	approxes = []
 	good = []
@@ -153,22 +153,6 @@ def main():
 
 		approxes.append(approx)
 
-	# Filter out duplicate quads
-	tree = scipy.spatial.KDTree([corner for contour in approxes for corner in contour])
-	pairs = tree.query_pairs(1.)
-	#print('pairs', pairs)
-	connected_indices = collections.defaultdict(lambda: collections.defaultdict(int))
-	for pair in pairs:
-		connected = set(point_idx // 4 for point_idx in pair)
-		for (left, right) in itertools.product(connected, repeat=2):
-			if left != right:
-				connected_indices[left][right] += 1
-	connected = [approxes[left_idx] for (left_idx, right_counts) in connected_indices.iteritems()
-		# If two quads overlap on 3 or more sides, then discard the one that was found
-		# first, which is the one found in the noiser image with the smaller block size.
-		if all(right_idx < left_idx or right_count < 3 for (right_idx, right_count) in right_counts.iteritems())]
-	approxes = connected
-
 	for approx in approxes:
 		dilated_segments = []
 		# FIXME: This loop is even slower than running drawContours and findContours below
@@ -198,77 +182,53 @@ def main():
 			#print('intersection', intersection)
 			dilated_contour.append(intersection)
 		#print('contour', dilated_contour)
-		# FIXME: Don't round here.
-
-		dilated_contour_array = numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
-			for (x,y) in dilated_contour])
+		#dilated_contour_array = numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
+		#	for (x,y) in dilated_contour])
+		dilated_contour_array = numpy.array(dilated_contour)
 
 		good.append(dilated_contour_array)
-		continue
-
-		#print([tuple(cp[0])  for cp in contour], '=>', dilated_segments)
-
-		# Dilate the contour
-		bg = numpy.zeros((color2.shape[0], color2.shape[1]), dtype=numpy.uint8)
-		cv2.drawContours(bg, [approx], -1, 255, cv2.FILLED)
-		#kernel_lg = numpy.ones((20,30),numpy.uint8)
-		dilatedApprox = cv2.dilate(bg, kernel)
-		# TODO: This is messy. Use a mathematical translation of the contour
-		# to find the contour that barely bounds this contour with a
-		# kernel mask at each corner. This can be done with cv2.convexHull
-		imda, contoursa, hierarchy = cv2.findContours(dilatedApprox,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
-		if len(contoursa) != 1:
-			print('bad contour count', contoursa)
-		contoursa1 = contoursa[0]
-		if len(contoursa1) > 4:
-			#print('repeating', len(contoursa1))
-			contoursa1 = cv2.approxPolyDP(contoursa1, perimeter/20, True)
-		if len(contoursa1) != 4:
-			contoursa1 = approx
-
-		# FIXME: Find sub-pixel position of these corners.
-
-		oldgood.append(contoursa1)
-		if idx < len(contoursd):
-			oldgoodd.append(contoursa1)
-		else:
-			oldgoode.append(contoursa1)
-
 	#print('GOOD', len(good))
 
-	contcorners = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
+	# Filter out duplicate quads
+	tree = scipy.spatial.KDTree([corner for contour in good for corner in contour])
+	dist = numpy.linalg.norm([2, 2])
+	pairs = tree.query_pairs(dist)
+	#print('pairs', pairs)
+	connected_indices = collections.defaultdict(lambda: collections.defaultdict(int))
+	for pair in pairs:
+		connected = set(point_idx // 4 for point_idx in pair)
+		for (left, right) in itertools.product(connected, repeat=2):
+			if left != right:
+				#print(left, '=>', right)
+				connected_indices[left][right] += 1
+	#print('CONN_IND', len(connected_indices), connected_indices)
+	#uniques = {left_idx: {right_idx: right_count for (right_idx, right_count) in right_counts.iteritems()
+	#		# If two quads overlap on 3 or more sides, then discard the one that was found
+	#		# first, which is the one found in the noiser image with the smaller block size.
+	#		if right_idx < left_idx or right_count < 3}
+	#	for (left_idx, right_counts) in connected_indices.iteritems()}
+	uniques = {left_idx:
+		[right_idx
+			for (right_idx, right_count) in right_counts.iteritems()
+			if right_count < 3]
+		for (left_idx, right_counts) in connected_indices.iteritems()
+		# If two quads overlap on 3 or more sides, then discard the one that was found
+		# first, which is the one found in the noiser image with the smaller block size.
+		if all(right_idx < left_idx or right_count < 3 for (right_idx, right_count) in right_counts.iteritems())}
+	#print('UNIQUES', len(uniques), uniques)
+	connected_map = [left_idx for (left_idx, right_counts) in uniques.iteritems() if right_counts]
+	#print('CONN_MAP', len(connected_map), connected_map)
+	reverse_connected_map = {old_idx: new_idx for (new_idx, old_idx) in enumerate(connected_map)}
+	quads = [good[left_idx] for left_idx in connected_map]
+	#print('quads', len(quads))
+
 	contlines = numpy.zeros((color2.shape[0], color2.shape[1], 3), numpy.uint8)
-	contlinesd = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
-	contlinese = numpy.zeros((color2.shape[0], color2.shape[1]), numpy.uint8)
-	#for (idx, contour) in reversed(list(enumerate(approxes))):
-	#	cv2.drawContours(contlines, [contour], -1, (0, 255, 0), 1)
-	#for (idx, contour) in reversed(list(enumerate(oldgood))):
-	#	cv2.drawContours(contlines, [contour], -1, (255, 0, 0), 1)
-	for (idx, contour) in reversed(list(enumerate(good))):
-		#color = [a*256 for a in colorsys.hsv_to_rgb(random.random(), 0.75, 1)]
-		color = (255, 0, 0)
-		#cv2.drawContours(color1, [contour], -1, color, cv2.FILLED)
-		#print('contour', contour)
-		cv2.drawContours(color1, [contour], -1, color, 2)
-		cv2.drawContours(contlines, [contour], -1, (0, 0, 255), 1)
-		if idx < len(goodd):
-			cv2.drawContours(contlinesd, [contour], -1, 255, 1)
-		else:
-			cv2.drawContours(contlinese, [contour], -1, 255, 1)
-		for cr in contour:
-			if contcorners[(cr[1], cr[0])]:
-				#print('clobbered corner')
-				pass
-			contcorners[(cr[1], cr[0])] = 255
-		#print('area', cv2.contourArea(contour))
-		#cv2.imshow(WINNAME, color1)
-		#key = cv2.waitKey(0)
-
-	#cv2.imshow(WINNAME, contlinesd)
-	#key = cv2.waitKey(0)
-	#cv2.imshow(WINNAME, contlinese)
-	#key = cv2.waitKey(0)
-
+	for contour in good:
+		cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
+		for (x,y) in contour]]), -1, (0, 0, 255), 1)
+	for contour in quads:
+		cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
+		for (x,y) in contour]]), -1, (255, 0, 0), 1)
 	#cv2.imshow(WINNAME, contlines)
 	#key = cv2.waitKey(0)
 
@@ -415,7 +375,7 @@ def main():
 			working = numpy.copy(color3)
 			left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
 			right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
-			cv2.drawContours(working, numpy.array(sample_quads), -1, 255, 2)
+			cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in sample_quad]) for sample_quad in sample_quads]), -1, 255, 2)
 			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
 			#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
 			#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
@@ -425,7 +385,7 @@ def main():
 			for quad in sample_quads:
 				for point in quad:
 					for vp in self.vps:
-						cv2.line(working, point, tuple(int(d) for d in vp), (0,0,255), 1)
+						cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
 			cv2.imshow(WINNAME, working)
 			key = cv2.waitKey(1)
 
@@ -514,10 +474,6 @@ def main():
 					print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
 			return rotated
 
-	# Change the shape to a list of quads.
-	# Currently each square is 100 pixels per size, so normalize it down to unit squares.
-	#quads = [[[dim / 100. for dim in corner[0]] for corner in quad] for quad in good]
-	quads = good
 	if len(quads) < 3:
 		raise RuntimeError('Not enough quads found')
 	threshold = sum((dim/16.)**2 for dim in color3.shape[0:2])
@@ -560,7 +516,7 @@ def main():
 	inlier_quads = [quad for (quad, mask) in zip(quads, regressor.inlier_mask_) if mask]
 	#print('vps', tuple(vp1), tuple(vp2))
 	#print('quads', inlier_quads)
-	cv2.drawContours(working, numpy.array(inlier_quads), -1, 255, 2)
+	cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
 	cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
 	#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
 	#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
@@ -570,32 +526,32 @@ def main():
 	for quad in inlier_quads:
 		for point in quad:
 			for vp in [vp1, vp2]:
-				cv2.line(working, tuple(point), tuple(int(d) for d in vp), (0,0,255), 1)
-	cv2.imshow(WINNAME, working)
-	key = cv2.waitKey(1)
+				cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
 
+	inlier_indices = [idx for (idx, mask) in enumerate(regressor.inlier_mask_) if mask]
+	# Discard quads that are no longer touching any other inliers
+	filtered_inlier_indices = [idx for idx in inlier_indices
+		if any(right_idx in reverse_connected_map and reverse_connected_map[right_idx] in inlier_indices for right_idx in uniques[connected_map[idx]])]
+	inlier_quads = [quads[idx] for idx in filtered_inlier_indices]
+	#cv2.imshow(WINNAME, working)
+	#key = cv2.waitKey(0)
+	if len(inlier_quads) < 3:
+		raise RuntimeError('Not enough quads found')
 
 	# Run it again on the inliers with higher precision
-	regressor = sklearn.linear_model.RANSACRegressor(
-		base_estimator=ChessboardPerspectiveEstimator(tol=math.pi/360000., shape=color3.shape, seed=(vp1, vp2)),
-		residual_metric=lambda dy: numpy.sum(dy**2, axis=1),
-		# Each segment has only 3 degrees of allowed error on average.
-		residual_threshold=math.pi/15.,
-		#residual_threshold=threshold,
-		min_samples=3,
-	)
+	estimator = ChessboardPerspectiveEstimator(tol=math.pi/360000., shape=color3.shape, seed=(vp1, vp2))
 	target_pts = [[dim for corner in quad for dim in corner] for quad in inlier_quads]
 	training_pts = [(0,) for i in range(len(inlier_quads))]
-	regressor.fit(target_pts, training_pts)
+	estimator.fit(target_pts, training_pts)
 
-	(vp1, vp2) = regressor.estimator_.vps
+	(vp1, vp2) = estimator.vps
 	working = numpy.copy(color3)
 	left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
 	right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
-	inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]
+	#inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]
 	print('vps', tuple(vp1), tuple(vp2))
-	print('quads', len(inlier_quads))
-	cv2.drawContours(working, numpy.array(inlier_quads), -1, 255, 2)
+	#print('quads', len(inlier_quads))
+	cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
 	cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
 	#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
 	#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
@@ -605,10 +561,14 @@ def main():
 	for quad in inlier_quads:
 		for point in quad:
 			for vp in [vp1, vp2]:
-				cv2.line(working, tuple(point), tuple(int(d) for d in vp), (0,0,255), 1)
+				cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
 	cv2.imshow(WINNAME, working)
-	key = cv2.waitKey(1)
+	key = cv2.waitKey(0)
 
+	# TODO: Calculate the rotation matrix
+	# TODO: Project all quads using the rotation matrix
+	# TODO: Find the standard deviation of edge lengths and discard ouliers
+	#
 
 	return
 
