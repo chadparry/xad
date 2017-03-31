@@ -583,7 +583,6 @@ def main():
 	oi = image_dim / 2.
 	oi_projection = numpy.dot(oi - vp1, unit_horizon)
 	vi = vp1 + oi_projection * unit_horizon
-	print('oi', oi)
 	print('vi', vi)
 	square_f = numpy.linalg.norm(vi - vp1) * numpy.linalg.norm(vi - vp2) - numpy.linalg.norm(vi - oi)**2
 	if square_f > 0:
@@ -593,10 +592,102 @@ def main():
 		f = max(image_dim)
 	print('f', f)
 
+	x_axis = numpy.array([vp1[0], vp1[1], f])
+	y_axis = numpy.array([vp2[0], vp2[1], f])
+	unit_x_axis = x_axis / numpy.linalg.norm(x_axis)
+	unit_y_axis = y_axis / numpy.linalg.norm(y_axis)
+	unit_z_axis = numpy.cross(unit_x_axis, unit_y_axis)
+	denom1 = math.sqrt(vp1[0]**2 + vp1[1]**2 + f)
+	denom2 = math.sqrt(vp2[0]**2 + vp2[1]**2 + f)
+	r = numpy.array([
+		[vp1[0] / denom1, vp2[0] / denom2, unit_z_axis[0]],
+		[vp1[1] / denom1, vp2[1] / denom2, unit_z_axis[1]],
+		[f / denom1, f / denom2, unit_z_axis[2]],
+	])
+	print('R', r)
 
 	# TODO: Project all quads using the rotation matrix
 	# TODO: Find the standard deviation of edge lengths and discard ouliers
 	#
+
+	#warped = cv2.warpPerspective(refimg, r, (color3.shape[1], color3.shape[0]))
+	#cv2.imshow(WINNAME, warped)
+	#key = cv2.waitKey(0)
+
+
+
+
+
+	# FIXME: Is this true?
+	homography = numpy.linalg.inv(r)
+	sample_quads = inlier_quads
+	sample_center_coords = [get_centroid(quad) for quad in sample_quads]
+
+	# Move to a visible area of the image
+	projected_centers = cv2.perspectiveTransform(
+		numpy.array([sample_center_coords]).astype('float32'), homography)[0]
+	group_center_x = sum(x for (x, y) in projected_centers) / float(len(projected_centers))
+	group_center_y = sum(y for (x, y) in projected_centers) / float(len(projected_centers))
+	#print('group_center', group_center_x, group_center_y)
+	distance = (5. - group_center_x, 5. - group_center_y)
+	translation = (distance[0] // 2. * 2, distance[1] // 2. * 2)
+	#print('translation for show', translation)
+	transM = numpy.array([[1., 0., translation[0]], [0., 1., translation[1]], [0., 0., 1.]])
+	centeredM = numpy.dot(transM, homography)
+	scaled = centeredM / centeredM[2][2]
+
+	zoom_in = numpy.array([[100., 0., 0.], [0., 100., 0.], [0., 0., 1.]])
+	#Min = numpy.dot(zoom_in, M)
+	#invMin = numpy.dot(zoom_in, invM)
+	zoomM = numpy.dot(zoom_in, scaled)
+	reverseM = numpy.linalg.inv(zoomM)
+
+	Mtrans = numpy.copy(homography)
+	t1 = - Mtrans[0][2] / Mtrans[2][2]
+	t2 = - Mtrans[1][2] / Mtrans[2][2]
+	untrans = numpy.array([
+		[1., 0., t1],
+		[0., 1., t2],
+		[0., 0., 1.],
+	])
+	#print('t', t1, t2)
+	Muntrans = numpy.dot(untrans, Mtrans)
+		#print('score', self.objective(sample_center_coords, true_center_coords, sample_quads, true_quads,
+	#	numpy.array([cell for row in Muntrans for cell in row[:-1]])))
+	warped = cv2.warpPerspective(refimg,
+			reverseM,
+			(color3.shape[1], color3.shape[0]))
+
+	flatmask = numpy.full(refimg.shape, 255, dtype=numpy.uint8)
+	warpedmask = cv2.warpPerspective(flatmask, reverseM, (color3.shape[1], color3.shape[0]))
+	maskidx = (warpedmask!=0)
+	overlay = numpy.copy(color3)
+	overlay[maskidx] = warped[maskidx]
+
+	#print('quads', sample_quads)
+	for quad in sample_quads:
+		contours = [numpy.array([[point] for point in quad]).astype('int')]
+		#cv2.drawContours(overlay, contours, -1, 255, cv2.FILLED)
+		cv2.drawContours(overlay, contours, -1, 255, 2)
+		#c = shapely.geometry.polygon.Polygon(quad).representative_point()
+		c = [sum(p[dim] for p in quad)/4. for dim in [0, 1]]
+		cv2.circle(overlay, (int(round(c[0])), int(round(c[1]))), 3, (0, 255, 0))
+
+	#cv2.imshow(WINNAME, overlay)
+	#key = cv2.waitKey(0)
+
+
+	projected = numpy.copy(color3)
+	axis = numpy.float32([[0,0,0], [(pattern_size[0]+1)*100,0,0], [0,(pattern_size[1]+1)*100,0], [0,0,-100]]).reshape(-1,3)
+	tvec = [[0., 0., 0.], [0., 0., 0.], [0., 0., 0.]]
+	dist = 1
+	axispt, j = cv2.projectPoints(axis, homography, tvec, mtx, dist)
+	cv2.line(projected, tuple(axispt[0].ravel()), tuple(axispt[1].ravel()), (0,0,255), 5)
+	cv2.line(projected, tuple(axispt[0].ravel()), tuple(axispt[2].ravel()), (0,255,0), 5)
+	cv2.line(projected, tuple(axispt[0].ravel()), tuple(axispt[3].ravel()), (255,0,0), 5)
+	cv2.imshow(WINNAME, projected)
+	key = cv2.waitKey(0)
+
 
 	return
 
