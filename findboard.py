@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from __future__ import print_function
+
 import collections
 import colorsys
 import cv2
@@ -14,6 +16,7 @@ import skimage.measure
 import skimage.transform
 import sklearn.base
 import sklearn.linear_model
+import sys
 
 
 WINNAME = 'Chess Transcription'
@@ -194,7 +197,7 @@ def main():
 	dist = numpy.linalg.norm([2, 2])
 	pairs = tree.query_pairs(dist)
 	#print('pairs', pairs)
-	connected_indices = collections.defaultdict(lambda: collections.defaultdict(int))
+	connected_indices = collections.defaultdict(collections.Counter)
 	for pair in pairs:
 		connected = set(point_idx // 4 for point_idx in pair)
 		for (left, right) in itertools.product(connected, repeat=2):
@@ -382,6 +385,7 @@ def main():
 			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 			#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
 			#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 1)
 			for quad in sample_quads:
 				for point in quad:
 					for vp in self.vps:
@@ -523,6 +527,7 @@ def main():
 	cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 	#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
 	#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+	cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 1)
 	for quad in inlier_quads:
 		for point in quad:
 			for vp in [vp1, vp2]:
@@ -533,12 +538,15 @@ def main():
 	filtered_inlier_indices = [idx for idx in inlier_indices
 		if any(right_idx in reverse_connected_map and reverse_connected_map[right_idx] in inlier_indices for right_idx in uniques[connected_map[idx]])]
 	inlier_quads = [quads[idx] for idx in filtered_inlier_indices]
-	#cv2.imshow(WINNAME, working)
-	#key = cv2.waitKey(0)
+	cv2.imshow(WINNAME, working)
+	key = cv2.waitKey(1)
 	if len(inlier_quads) < 3:
 		raise RuntimeError('Not enough quads found')
 
 	# Run it again on the inliers with higher precision
+	# FIXME: Now that the inliers and edge orientations are known, an analytic solution is possible
+	# See http://math.stackexchange.com/questions/61719/finding-the-intersection-point-of-many-lines-in-3d-point-closest-to-all-lines
+	# http://www.mathworks.com/matlabcentral/fileexchange/37192-intersection-point-of-lines-in-3d-space
 	estimator = ChessboardPerspectiveEstimator(tol=math.pi/360000., shape=color3.shape, seed=(vp1, vp2))
 	target_pts = [[dim for corner in quad for dim in corner] for quad in inlier_quads]
 	training_pts = [(0,) for i in range(len(inlier_quads))]
@@ -558,6 +566,7 @@ def main():
 	cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 	#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
 	#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+	cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 1)
 	for quad in inlier_quads:
 		for point in quad:
 			for vp in [vp1, vp2]:
@@ -565,7 +574,26 @@ def main():
 	cv2.imshow(WINNAME, working)
 	key = cv2.waitKey(0)
 
-	# TODO: Calculate the rotation matrix
+	# Calculate the camera parameters
+	# See https://fedcsis.org/proceedings/2012/pliks/110.pdf
+	horizon = vp2 - vp1
+	horizon_norm = numpy.linalg.norm(horizon)
+	unit_horizon = horizon / horizon_norm if horizon_norm != 0. else numpy.zeros(horizon.shape)
+	image_dim = numpy.array([color3.shape[1], color3.shape[0]])
+	oi = image_dim / 2.
+	oi_projection = numpy.dot(oi - vp1, unit_horizon)
+	vi = vp1 + oi_projection * unit_horizon
+	print('oi', oi)
+	print('vi', vi)
+	square_f = numpy.linalg.norm(vi - vp1) * numpy.linalg.norm(vi - vp2) - numpy.linalg.norm(vi - oi)**2
+	if square_f > 0:
+		f = math.sqrt(square_f)
+	else:
+		print("Camera center is not aligned with image center", file=sys.stderr)
+		f = max(image_dim)
+	print('f', f)
+
+
 	# TODO: Project all quads using the rotation matrix
 	# TODO: Find the standard deviation of edge lengths and discard ouliers
 	#
