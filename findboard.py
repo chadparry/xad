@@ -86,6 +86,7 @@ def main():
 		#key = cv2.waitKey(0)
 
 		# For finding dark squares
+		# FIXME: Start with a 1-pixel dilation and increase to 7, like cv::findChessboardCorners.
 		kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(4,4))
 		dilated = cv2.dilate(thresh, kernel)
 		# For finding light squares
@@ -572,8 +573,8 @@ def main():
 			for point in quad:
 				for vp in [vp1, vp2]:
 					cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
-		cv2.imshow(WINNAME, working)
-		key = cv2.waitKey(0)
+		#cv2.imshow(WINNAME, working)
+		#key = cv2.waitKey(0)
 	else:
 
 		# FIXME
@@ -876,8 +877,9 @@ def main():
 
 
 	(h, w, _) = color3.shape
-	fx = fy = f = max(h, w)
-	(fx, fy) = (120., 16.)
+	#f = max(h, w)
+	fx = fy = f
+	#(fx, fy) = (120., 16.)
 	default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
 	inv_default_mtx = numpy.linalg.inv(default_mtx)
 	x_axis = numpy.array([vp1[0], vp1[1], 1])
@@ -889,12 +891,18 @@ def main():
 	r3 = numpy.cross(r1, r2)
 	rdenorm = numpy.concatenate([r1.reshape(3,1), r2.reshape(3,1), r3.reshape(3,1)], axis=1)
 	r = rdenorm / rdenorm[2][2]
-	tvec = numpy.array([-4., 18., 1.])
 	dist = None
 
-	#zoom_out = numpy.array([[0.5, 0., 0.], [0., 0.5, 0.], [0., 0., 1.]])
-	#r = numpy.dot(zoom_out, r)
-	#r = r / r[2][2]
+	# Huge squares:
+	#tvec = numpy.array([-1., 0., 0.])
+	#zoom_out = numpy.array([[0.05, 0., 0.], [0., 0.1, 0.], [0., 0., 1.]])
+	#tvec = numpy.array([-10., 10., 0.])
+	#zoom_out = numpy.array([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
+	tvec = numpy.array([-100., 50., 0.])
+	zoom_out = numpy.array([[3., 0., 0.], [0., 10., 0.], [0., 0., 1.]])
+
+	r = numpy.dot(r, zoom_out)
+	r = r / r[2][2]
 
 	print('R', r)
 	#print('tvec', tvec.reshape(3,1))
@@ -925,9 +933,64 @@ def main():
 	cv2.circle(bg, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 	cv2.line(bg, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 1)
 
+	#cv2.imshow(WINNAME, bg)
+	#key = cv2.waitKey(0)
+
+	tvec = numpy.array([-190., 80., 0.])
+	def reverse_project(p):
+		proj = numpy.dot(numpy.linalg.inv(numpy.dot(default_mtx, numpy.concatenate([numpy.delete(r, 2, 1), tvec.reshape(3,1)], axis=1))), numpy.array(p).reshape(3,1))
+		return (proj.reshape(1,3) / proj[2][0])[0][0:2]
+
+	bg = numpy.copy(color3)
+	rq = []
+	for quad in inlier_quads:
+		quadpts = numpy.array([reverse_project([pt[0], pt[1], 1.]) for pt in quad])
+		rq.append(quadpts)
+		#print('reverse projected quad', quadpts)
+		cv2.drawContours(bg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
+		cv2.drawContours(bg, [numpy.array([[dim * 100 for dim in pt] for pt in quadpts]).astype('int')], -1, (255, 0, 0), 2)
+	#cv2.imshow(WINNAME, bg)
+	#key = cv2.waitKey(0)
+
+	# FIXME: Calculate the x and y deltas separately (ignoring lines' slant)
+	# once it is known that all quads are oriented consistently!
+
+	perimeter = 0
+	for quad in rq:
+		perimeter += cv2.arcLength((quad * 100.).astype('int'), closed=True)
+	avg = perimeter / float(len(rq) * 400)
+	# FIXME: Remove outliers and recalculate the average.
+	print('avg-before', avg)
+
+	# This could be framed as a mixed-integer linear programming (MILP)
+	# problem, where each quad needs to be assigned to a integer grid
+	# position. However, MILP tools are heavy-weight. A less robust
+	# solution like this should always work adequately since there are
+	# very few outliers remaining.
+
+	# TODO: Calculate the most likely offset.
+	# TODO: Then remove outliers and recalculate.
+
+
+	zoom_in = numpy.array([[avg, 0., 0.], [0., avg, 0.], [0., 0., 1.]])
+	scaled = numpy.dot(r, zoom_in)
+	def reverse_project_scaled(p):
+		proj = numpy.dot(numpy.linalg.inv(numpy.dot(default_mtx, numpy.concatenate([numpy.delete(scaled, 2, 1), tvec.reshape(3,1)], axis=1))), numpy.array(p).reshape(3,1))
+		return (proj.reshape(1,3) / proj[2][0])[0][0:2]
+	bg = numpy.copy(color3)
+	rq = []
+	for quad in inlier_quads:
+		quadpts = numpy.array([reverse_project_scaled([pt[0], pt[1], 1.]) for pt in quad])
+		rq.append(quadpts)
+		cv2.drawContours(bg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
+		cv2.drawContours(bg, [numpy.array([[dim * 100 for dim in pt] for pt in quadpts]).astype('int')], -1, (255, 0, 0), 2)
+	perimeter = 0
+	for quad in rq:
+		perimeter += cv2.arcLength((quad * 100.).astype('int'), closed=True)
+	avg = perimeter / float(len(rq) * 400)
+	print('avg-after', avg)
 	cv2.imshow(WINNAME, bg)
 	key = cv2.waitKey(0)
-
 
 
 	return
