@@ -519,6 +519,7 @@ def main():
 		working = numpy.copy(color3)
 		left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
 		right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
+		# FIXME: Use itertools.compress
 		inlier_quads = [quad for (quad, mask) in zip(quads, regressor.inlier_mask_) if mask]
 		#print('vps', tuple(vp1), tuple(vp2))
 		#print('quads', inlier_quads)
@@ -877,7 +878,7 @@ def main():
 
 
 	(h, w, _) = color3.shape
-	#f = max(h, w)
+	f = max(h, w)
 	fx = fy = f
 	#(fx, fy) = (120., 16.)
 	default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
@@ -893,29 +894,30 @@ def main():
 	r = rdenorm / rdenorm[2][2]
 	dist = None
 
+	tvec = numpy.array([0., 0., 1.])
 	# Huge squares:
 	#tvec = numpy.array([-1., 0., 0.])
 	#zoom_out = numpy.array([[0.05, 0., 0.], [0., 0.1, 0.], [0., 0., 1.]])
 	#tvec = numpy.array([-10., 10., 0.])
 	#zoom_out = numpy.array([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
-	tvec = numpy.array([-100., 50., 0.])
-	zoom_out = numpy.array([[3., 0., 0.], [0., 10., 0.], [0., 0., 1.]])
+	#tvec = numpy.array([-100., 50., 0.])
+	#zoom_out = numpy.array([[3., 0., 0.], [0., 10., 0.], [0., 0., 1.]])
 
-	r = numpy.dot(r, zoom_out)
-	r = r / r[2][2]
+	#r = numpy.dot(r, zoom_out)
+	#r = r / r[2][2]
 
-	print('R', r)
+	#print('R', r)
 	#print('tvec', tvec.reshape(3,1))
 
-	rt1 = numpy.dot(numpy.dot(default_mtx, numpy.concatenate([r, tvec.reshape(3,1)], axis=1)), numpy.array([1., 0., 0., 0.]).reshape(4,1))
-	rt2 = numpy.dot(numpy.dot(default_mtx, numpy.concatenate([r, tvec.reshape(3,1)], axis=1)), numpy.array([0., 1., 0., 0.]).reshape(4,1))
-	print('round trip 1', vp1, '->', (rt1.reshape(1,3) / rt1[2][0])[0][0:2])
-	print('round trip 2', vp2, '->', (rt2.reshape(1,3) / rt2[2][0])[0][0:2])
+	#rt1 = numpy.dot(numpy.dot(default_mtx, numpy.concatenate([r, tvec.reshape(3,1)], axis=1)), numpy.array([1., 0., 0., 0.]).reshape(4,1))
+	#rt2 = numpy.dot(numpy.dot(default_mtx, numpy.concatenate([r, tvec.reshape(3,1)], axis=1)), numpy.array([0., 1., 0., 0.]).reshape(4,1))
+	#print('round trip 1', vp1, '->', (rt1.reshape(1,3) / rt1[2][0])[0][0:2])
+	#print('round trip 2', vp2, '->', (rt2.reshape(1,3) / rt2[2][0])[0][0:2])
 	def project(p):
 		proj = numpy.dot(numpy.dot(default_mtx, numpy.concatenate([r, tvec.reshape(3,1)], axis=1)), numpy.array(p).reshape(4,1))
 		return (proj.reshape(1,3) / proj[2][0])[0][0:2]
-	print('round trip 1', vp1, '->', project([1., 0., 0., 0.]))
-	print('round trip 2', vp2, '->', project([0., 1., 0., 0.]))
+	#print('round trip 1', vp1, '->', project([1., 0., 0., 0.]))
+	#print('round trip 2', vp2, '->', project([0., 1., 0., 0.]))
 
 	projectable_quads = numpy.array([[[x+dx, y+dy, 0.] for (dx,dy) in [(0,0),(1,0),(1,1),(0,1)]] for (x,y) in itertools.product(range(8), range(8))])
 	bg = numpy.copy(color3)
@@ -926,17 +928,17 @@ def main():
 		cv2.drawContours(bg, [quadpts], -1, (255, 0, 0), 2)
 
 		quadpts = numpy.array([project([pt[0], pt[1], 0., 1.]) for pt in pq]).astype('int')
-		#print('projected quad', quadpts)
+		print('projected quad', quadpts)
 		cv2.drawContours(bg, [quadpts], -1, (0, 0, 255), 1)
 
 	cv2.circle(bg, tuple(int(p) for p in vp1), 5, (0, 255, 0))
 	cv2.circle(bg, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 	cv2.line(bg, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 1)
 
-	#cv2.imshow(WINNAME, bg)
-	#key = cv2.waitKey(0)
+	cv2.imshow(WINNAME, bg)
+	key = cv2.waitKey(1)
 
-	tvec = numpy.array([-190., 80., 0.])
+	tvec = numpy.array([0., 0., 1.])
 	def reverse_project(p):
 		proj = numpy.dot(numpy.linalg.inv(numpy.dot(default_mtx, numpy.concatenate([numpy.delete(r, 2, 1), tvec.reshape(3,1)], axis=1))), numpy.array(p).reshape(3,1))
 		return (proj.reshape(1,3) / proj[2][0])[0][0:2]
@@ -946,21 +948,35 @@ def main():
 	for quad in inlier_quads:
 		quadpts = numpy.array([reverse_project([pt[0], pt[1], 1.]) for pt in quad])
 		rq.append(quadpts)
-		#print('reverse projected quad', quadpts)
+		plot = numpy.array([[x * 30000 + 2000, y * 30000 + 300] for (x,y) in quadpts]).astype('int')
+		#print('reverse projected quad', plot, get_perimeter(quadpts))
 		cv2.drawContours(bg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
-		cv2.drawContours(bg, [numpy.array([[dim * 100 for dim in pt] for pt in quadpts]).astype('int')], -1, (255, 0, 0), 2)
-	#cv2.imshow(WINNAME, bg)
-	#key = cv2.waitKey(0)
+		cv2.drawContours(bg, [plot], -1, (255, 0, 0), 2)
+	cv2.imshow(WINNAME, bg)
+	key = cv2.waitKey(1)
 
 	# FIXME: Calculate the x and y deltas separately (ignoring lines' slant)
 	# once it is known that all quads are oriented consistently!
 
-	perimeter = 0
-	for quad in rq:
-		perimeter += cv2.arcLength((quad * 100.).astype('int'), closed=True)
-	avg = perimeter / float(len(rq) * 400)
-	# FIXME: Remove outliers and recalculate the average.
-	print('avg-before', avg)
+	print('perimeters-first', [get_perimeter(quad) for quad in rq])
+	perimeter = sum(get_perimeter(quad) for quad in rq)
+	avg = perimeter / float(len(rq))
+	print('avg-first', avg, len(rq))
+	THRESHOLD = avg * 0.1
+	print('perimeter errors', [abs(avg - get_perimeter(quad)) for quad in rq])
+	rq_inliers = [quad for quad in rq if abs(avg - get_perimeter(quad)) < THRESHOLD]
+	print('perimeters-second', [get_perimeter(quad) for quad in rq_inliers])
+	perimeter = sum(get_perimeter(quad) for quad in rq_inliers)
+	avg = perimeter / float(len(rq_inliers))
+	print('avg-second', avg, len(rq_inliers))
+	square = avg / 4.
+
+	for quadpts in rq_inliers:
+		plot = numpy.array([[x * 30000 + 2000, y * 30000 + 300] for (x,y) in quadpts]).astype('int')
+		cv2.drawContours(bg, [plot], -1, (0, 0, 255), 1)
+	cv2.imshow(WINNAME, bg)
+	key = cv2.waitKey(1)
+
 
 	# This could be framed as a mixed-integer linear programming (MILP)
 	# problem, where each quad needs to be assigned to a integer grid
@@ -968,14 +984,81 @@ def main():
 	# solution like this should always work adequately since there are
 	# very few outliers remaining.
 
-	# TODO: Calculate the most likely offset.
-	# TODO: Then remove outliers and recalculate.
-
-
-	zoom_in = numpy.array([[avg, 0., 0.], [0., avg, 0.], [0., 0., 1.]])
+	# We need the best translation that puts the points closest to true square points.
+	# The translation in each dimension can be calculated independently.
+	# It doesn't matter which square the points are near, so that means that modular arithmetic is needed.
+	# The offsets need to be brought as close as possible to any integral values.
+	# To do that, the points are translated to points on a unit circle and the average angle is computed.
+	# TODO: This could distinguish between light and dark squares
+	biased_points = [[dim / square for dim in p] for quad in rq_inliers for p in quad]
+	angles = ([dim * math.pi*2 for dim in p] for p in biased_points)
+	(anglesx, anglesy) = zip(*angles)
+	biasanglex = math.atan2(
+		sum(math.sin(angle) for angle in anglesx),
+		sum(math.cos(angle) for angle in anglesx))
+	biasangley = math.atan2(
+		sum(math.sin(angle) for angle in anglesy),
+		sum(math.cos(angle) for angle in anglesy))
+	biasx = biasanglex / (math.pi*2)
+	biasy = biasangley / (math.pi*2)
+	translation = numpy.array([-biasx, -biasy, 0.])
+	shifted_points = ([x - biasx, y - biasy] for (x, y) in biased_points)
+	print('translation', translation)
+	# FIXME: Then remove outliers and recalculate.
+	# FIXME: The numbers before the round should be nearly whole numbers!
+	shifted_points = list(shifted_points)
+	print('before round', shifted_points)
+	grid_positions = [[int(round(dim)) for dim in p] for p in shifted_points]
+	min_position = (min(p[0] for p in grid_positions), min(p[1] for p in grid_positions))
+	max_position = (max(p[0] for p in grid_positions), max(p[1] for p in grid_positions))
+	padded_begin_position = (min_position[0] - 7, min_position[1] - 7)
+	padded_end_position = (max_position[0] + 8, max_position[1] + 8)
+	grid_corners = itertools.product(
+		range(padded_begin_position[0], padded_end_position[0] - padded_begin_position[0]),
+		range(padded_begin_position[1], padded_end_position[1] - padded_begin_position[1]))
+	grid_corners = list(grid_corners)
+	grid_corners_coord = (numpy.array([x, y, 1.]).reshape(3,1) for (x, y) in grid_corners)
+	zoom_in = numpy.array([[square, 0., 0.], [0., square, 0.], [0., 0., 1.]])
 	scaled = numpy.dot(r, zoom_in)
+	print('square', square)
+	offsetM = numpy.array([[1., 0., biasx], [0., 1., biasy], [0., 0., 1.]])
+	reverse_homography_denorm = default_mtx.dot(
+			numpy.delete(numpy.concatenate([scaled, tvec.reshape(3,1)], axis=1), 2, 1)
+		).dot(offsetM)
+	reverse_homography = reverse_homography_denorm / reverse_homography_denorm[2][2]
+	print('reverse', reverse_homography)
+	projected_grid_corners_denorm = (reverse_homography.dot(coord) for coord in grid_corners_coord)
+	project_grid_points = (coord.reshape(3)[:2] / coord[2] for coord in projected_grid_corners_denorm)
+
+
+	for quad in inlier_quads:
+		quadpts = numpy.array([reverse_project([pt[0], pt[1], 1.]) for pt in quad])
+		rq.append(quadpts)
+		plot = numpy.array([[x * 30000 + 2000, y * 30000 + 300] for (x,y) in quadpts]).astype('int')
+		#print('reverse projected quad', plot, get_perimeter(quadpts))
+		cv2.drawContours(bg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
+		cv2.drawContours(bg, [plot], -1, (255, 0, 0), 2)
+	for c in grid_corners:
+		cv2.circle(bg, (int(round(c[0] * square * 30000 + 2000)), int(round(c[1] * square * 30000 + 300))), 2, (0, 255, 0))
+	cv2.imshow(WINNAME, bg)
+	key = cv2.waitKey(0)
+
+
+	pimg = numpy.copy(color3)
+	for c in project_grid_points:
+		cv2.circle(pimg, (int(round(c[0])), int(round(c[1]))), 2, (0, 255, 0))
+	quad_corners_coord = (numpy.array([x, y, 1.]).reshape(3,1) for (x, y) in shifted_points)
+	projected_quad_corners_denorm = (reverse_homography.dot(coord) for coord in quad_corners_coord)
+	project_quad_points = (coord.reshape(3)[:2] / coord[2] for coord in projected_quad_corners_denorm)
+	for c in project_quad_points:
+		cv2.circle(pimg, (int(round(c[0])), int(round(c[1]))), 3, (255, 0, 0))
+	cv2.imshow(WINNAME, pimg)
+	key = cv2.waitKey(0)
+
 	def reverse_project_scaled(p):
 		proj = numpy.dot(numpy.linalg.inv(numpy.dot(default_mtx, numpy.concatenate([numpy.delete(scaled, 2, 1), tvec.reshape(3,1)], axis=1))), numpy.array(p).reshape(3,1))
+		#proj[0][0] += translation[0] / square
+		#proj[1][0] += translation[1] / square
 		return (proj.reshape(1,3) / proj[2][0])[0][0:2]
 	bg = numpy.copy(color3)
 	rq = []
@@ -989,8 +1072,63 @@ def main():
 		perimeter += cv2.arcLength((quad * 100.).astype('int'), closed=True)
 	avg = perimeter / float(len(rq) * 400)
 	print('avg-after', avg)
+
+	angles = ((x * math.pi*2, y * math.pi*2) for quad in rq for (x, y) in quad)
+	(anglesx, anglesy) = zip(*angles)
+	biasanglex = math.atan2(
+		sum(math.sin(angle) for angle in anglesx),
+		sum(math.cos(angle) for angle in anglesx))
+	biasangley = math.atan2(
+		sum(math.sin(angle) for angle in anglesy),
+		sum(math.cos(angle) for angle in anglesy))
+	biasx = biasanglex / (math.pi*2)
+	biasy = biasangley / (math.pi*2)
+	translation = [-biasx, -biasy, 0.]
+	offsetM = numpy.array([[1., 0., biasx], [0., 1., biasy], [0., 0., 1.]])
+	print('translation-after', translation)
+
+
+	def reverse_project_scaled2(p):
+		proj = numpy.linalg.inv(
+				default_mtx.dot(
+					numpy.delete(numpy.concatenate([scaled, tvec.reshape(3,1)], axis=1), 2, 1)
+				)
+				.dot(
+					offsetM
+				)
+			).dot(
+				numpy.array(p).reshape(3,1)
+			)
+		proj_shaped = (proj.reshape(1,3) / proj[2][0])[0][0:2]
+		return proj_shaped
+	bg = numpy.copy(color3)
+	rq = []
+	for quad in inlier_quads:
+		quadpts = numpy.array([reverse_project_scaled2([pt[0], pt[1], 1.]) for pt in quad])
+		rq.append(quadpts)
+		cv2.drawContours(bg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
+		cv2.drawContours(bg, [numpy.array([[dim * 100 for dim in pt] for pt in quadpts]).astype('int')], -1, (255, 0, 0), 2)
+	perimeter = 0
+	for quad in rq:
+		perimeter += cv2.arcLength((quad * 100.).astype('int'), closed=True)
+	avg = perimeter / float(len(rq) * 400)
+	print('avg-after-after', avg)
+
+	angles = ((x * math.pi*2, y * math.pi*2) for quad in rq for (x, y) in quad)
+	(anglesx, anglesy) = zip(*angles)
+	biasanglex = math.atan2(
+		sum(math.sin(angle) for angle in anglesx),
+		sum(math.cos(angle) for angle in anglesx))
+	biasangley = math.atan2(
+		sum(math.sin(angle) for angle in anglesy),
+		sum(math.cos(angle) for angle in anglesy))
+	biasx = biasanglex / (math.pi*2)
+	biasy = biasangley / (math.pi*2)
+	translation = [-biasx, -biasy, 0.]
+	print('translation-after-after', translation)
+
 	cv2.imshow(WINNAME, bg)
-	key = cv2.waitKey(0)
+	key = cv2.waitKey(1)
 
 
 	return
@@ -1078,7 +1216,7 @@ def main():
 	projected = numpy.copy(color3)
 	axis = numpy.float32([[0,0,0], [(pattern_size[0]+1)*100+1,0,0], [1,(pattern_size[1]+1)*100,0], [0,0,-100]]).reshape(-1,3)
 	print('axis', axis)
-	tvec = numpy.array([0., 0., 1.])
+	#tvec = numpy.array([0., 0., 1.])
 	dist = None
 	(h, w) = color3.shape[0:2]
 	default_mtx = numpy.array([[f, 0, w/2.], [0, f, h/2.], [0, 0, 1]]).astype('float32')
@@ -1097,7 +1235,7 @@ def main():
 	print('revR', numpy.linalg.inv(r))
 	#print('revR+rot', reverseR)
 	myr = r
-	tvec = numpy.array([-400., -300., 1.])
+	#tvec = numpy.array([-400., -300., 1.])
 
 	#myr = reverseR
 	#tvec = numpy.array([100., 200., 1.])
@@ -1122,7 +1260,7 @@ def main():
 
 	dist = None
 	myr = r
-	tvec = numpy.array([-1., -1., 1.])
+	#tvec = numpy.array([-1., -1., 1.])
 	projectable_quads = numpy.array([[[x+dx, y+dy, 0.] for (dx,dy) in [(0,0),(1,0),(1,1),(0,1)]] for (x,y) in itertools.product(range(8), range(8))])
 	bg = numpy.zeros(color3.shape)
 	#bg = numpy.zeros([1000,2000,3])
@@ -1245,6 +1383,13 @@ def line_intersection(a, b):
 	denom = numpy.dot(dap, db)
 	num = numpy.dot(dap, dp)
 	return (num / denom.astype(float))*db + b1
+
+
+def get_perimeter(contour):
+	(left, right, wrap) = itertools.tee(contour, 3)
+	next(right, None)
+	pairs = itertools.izip(left, itertools.chain(right, wrap))
+	return sum(numpy.linalg.norm(end - start) for (start, end) in pairs)
 
 
 if __name__ == "__main__":
