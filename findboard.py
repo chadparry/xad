@@ -306,9 +306,10 @@ def main():
 			#	self.quad_alignment_error(projected_quad, vp2, debug=True)
 
 
-			distance += min(
-				self.quad_alignment_error(projected_quad, vp1) + self.quad_alignment_error(rotated_quad, vp2),
-				self.quad_alignment_error(rotated_quad, vp1) + self.quad_alignment_error(projected_quad, vp2))
+			#distance += min(
+			#	self.quad_alignment_error(projected_quad, vp1) + self.quad_alignment_error(rotated_quad, vp2),
+			#	self.quad_alignment_error(rotated_quad, vp1) + self.quad_alignment_error(projected_quad, vp2))
+			distance += self.quad_alignment_error(projected_quad, vp1) + self.quad_alignment_error(rotated_quad, vp2)
 
 			#print('distance', distance)
 			return distance
@@ -386,7 +387,7 @@ def main():
 			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 			#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
 			#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 1)
+			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
 			for quad in sample_quads:
 				for point in quad:
 					for vp in self.vps:
@@ -482,12 +483,23 @@ def main():
 	if True:
 		if len(quads) < 3:
 			raise RuntimeError('Not enough quads found')
+
+		# RANSACRegressor expects the input to be an array of points.
+		# This target data is an array of quads instead, where each quad
+		# contains 4 points. The translation is done by passing all 4 2-D
+		# points as if they were a single 8-dimensional point.
+		quads_rot = [numpy.concatenate([quad[1:], quad[:1]]) for quad in quads]
+		target_pts = [[dim for corner in quad for dim in corner] for quad in quads + quads_rot]
+		dark_square = (0., 0., 0., 1., 1., 1., 1., 0.)
+		light_square = (1., 0., 1., 1., 2., 1., 2., 0.)
+		training_pts = [(0,) for i in range(len(target_pts))]
+
 		threshold = sum((dim/16.)**2 for dim in color3.shape[0:2])
 		#print('thresh', threshold)
 		visible_squares_estimate = 8 * 8 / 4
 		success_rate = 0.999999
 		retries = int(math.ceil(math.log(1 - success_rate,
-			max(0.5, 1 - visible_squares_estimate / float(len(quads))))))
+			max(0.5, 1 - visible_squares_estimate / float(len(target_pts))))))
 		while retries > 0:
 			regressor = sklearn.linear_model.RANSACRegressor(
 				base_estimator=ChessboardPerspectiveEstimator(tol=math.pi/360., shape=color3.shape),
@@ -499,28 +511,23 @@ def main():
 				max_trials=retries,
 			)
 			#regressor.get_params()['base_estimator'].set_params(tol=math.pi/360., shape=color3.shape)
-			# RANSACRegressor expects the input to be an array of points.
-			# This target data is an array of quads instead, where each quad
-			# contains 4 points. The translation is done by passing all 4 2-D
-			# points as if they were a single 8-dimensional point.
-			target_pts = [[dim for corner in quad for dim in corner] for quad in quads]
-			dark_square = (0., 0., 0., 1., 1., 1., 1., 0.)
-			light_square = (1., 0., 1., 1., 2., 1., 2., 0.)
-			training_pts = [(0,) for i in range(len(quads))]
 			try:
 				regressor.fit(target_pts, training_pts)
 				break
 			except ValueError as e:
 				print('Failed regression', e)
 			finally:
-				retries -= regressor.n_trials_
+				try:
+					retries -= regressor.n_trials_
+				except AttributeError:
+					pass
 
 		(vp1, vp2) = regressor.estimator_.vps
 		working = numpy.copy(color3)
 		left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
 		right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
 		# FIXME: Use itertools.compress
-		inlier_quads = [quad for (quad, mask) in zip(quads, regressor.inlier_mask_) if mask]
+		inlier_quads = [quad for (quad, mask) in zip(quads + quads_rot, regressor.inlier_mask_) if mask]
 		#print('vps', tuple(vp1), tuple(vp2))
 		#print('quads', inlier_quads)
 		cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
@@ -530,17 +537,19 @@ def main():
 		cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 		#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
 		#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-		cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 1)
+		cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
 		for quad in inlier_quads:
 			for point in quad:
 				for vp in [vp1, vp2]:
 					cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
 
-		inlier_indices = [idx for (idx, mask) in enumerate(regressor.inlier_mask_) if mask]
+		inlier_indices = [idx % len(quads) for (idx, mask) in enumerate(regressor.inlier_mask_) if mask]
 		# Discard quads that are no longer touching any other inliers
 		filtered_inlier_indices = [idx for idx in inlier_indices
 			if any(right_idx in reverse_connected_map and reverse_connected_map[right_idx] in inlier_indices for right_idx in uniques[connected_map[idx]])]
-		inlier_quads = [quads[idx] for idx in filtered_inlier_indices]
+		#inlier_quads = [quads[idx] for idx in filtered_inlier_indices]
+		# FIXME: Scanning the quads should not be necessary to filter.
+		inlier_quads = [quad for (idx, quad) in enumerate(quads + quads_rot) if idx % len(quads) in filtered_inlier_indices]
 		cv2.imshow(WINNAME, working)
 		key = cv2.waitKey(1)
 		if len(inlier_quads) < 3:
@@ -569,13 +578,13 @@ def main():
 		cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 		#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
 		#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-		cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 1)
+		cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
 		for quad in inlier_quads:
 			for point in quad:
 				for vp in [vp1, vp2]:
 					cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
-		#cv2.imshow(WINNAME, working)
-		#key = cv2.waitKey(0)
+		cv2.imshow(WINNAME, working)
+		key = cv2.waitKey(0)
 	else:
 
 		# FIXME
@@ -933,7 +942,7 @@ def main():
 
 	cv2.circle(bg, tuple(int(p) for p in vp1), 5, (0, 255, 0))
 	cv2.circle(bg, tuple(int(p) for p in vp2), 5, (0, 255, 0))
-	cv2.line(bg, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 1)
+	cv2.line(bg, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
 
 	cv2.imshow(WINNAME, bg)
 	key = cv2.waitKey(1)
@@ -1390,6 +1399,26 @@ def get_perimeter(contour):
 	next(right, None)
 	pairs = itertools.izip(left, itertools.chain(right, wrap))
 	return sum(numpy.linalg.norm(end - start) for (start, end) in pairs)
+
+
+def get_best_intersection(segments):
+	dims = segments.shape[1]
+	vectors = (end - begin for (begin, end) in segments)
+	horizon_norm = numpy.linalg.norm(horizon)
+	measured_vectors = ((vector, numpy.linalg.norm(vector))  for vector in vectors)
+	unit_vectors = [vector / mag if mag != 0. else numpy.zeros(dims)
+		for (vector, mag) in measured_vectors]
+	diagonals = numpy.eye(dims)
+	sums = numpy.array([[
+		sum(vector[dimx] * vector[dimy] - diagonals[dimy][dimx] for vector in unit_vectors)
+		for dimx in range(dims)]
+		for dimy in range(dims)])
+	begins = numpy.array([
+		sum(segment[0][dimx] * vector[dimx] * vector[dimy] - diagonals[dimy][dimx]
+		for dimx in range(dims) for (segment, vector) in zip(segments, unit_vectors))
+		for dimy in range(dims)])
+	intersect = numpy.linalg.lstsq(sums, begins).reshape(dims)
+	return intersect
 
 
 if __name__ == "__main__":
