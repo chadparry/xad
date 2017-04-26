@@ -249,6 +249,7 @@ def main():
 			self.set_params(tol=tol, shape=shape, seed=seed)
 			self.vps = None
 		def segment_alignment_error(self, segment, vp, debug=False):
+			# FIXME: Isn't the angle the same even if the coordinates are unsorted?
 			oriented = sorted(segment, key=lambda point: numpy.linalg.norm(point - vp), reverse=True)
 			(closer, further) = oriented
 			direction = closer - further
@@ -374,26 +375,33 @@ def main():
 			fitted = res.x
 			self.vps = numpy.array(grouper(fitted, 2))
 
+			err = self.objective(sample_quads, fitted)
+			print('err', err)
 			#print('optimization done')
 
 			(vp1, vp2) = (numpy.array(vp) for vp in grouper(fitted, 2))
 			working = numpy.copy(color3)
-			left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
-			right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
 			cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in sample_quad]) for sample_quad in sample_quads]), -1, 255, 2)
 			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
-			#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-			#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
 			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
-			#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-			#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
 			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
+
+			(vp1, vp2) = get_vps(sample_quads)
 			for quad in sample_quads:
 				for point in quad:
-					for vp in self.vps:
+					for vp in (vp1, vp2):
 						cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
+			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 4)
+
 			cv2.imshow(WINNAME, working)
-			key = cv2.waitKey(1)
+			if err < 3:
+				print('quads', sample_quads)
+				print('vps-numerical', self.vps)
+				key = cv2.waitKey(0)
+			else:
+				key = cv2.waitKey(1)
 
 			#print('comparison', self.objective(sample_quads, [360., 200., 6000., 240.], True))
 
@@ -515,12 +523,13 @@ def main():
 				regressor.fit(target_pts, training_pts)
 				break
 			except ValueError as e:
-				print('Failed regression', e)
-			finally:
+				#print('Failed regression', e)
 				try:
 					retries -= regressor.n_trials_
 				except AttributeError:
-					pass
+					retries = 0
+				if retries <= 0:
+					raise
 
 		(vp1, vp2) = regressor.estimator_.vps
 		working = numpy.copy(color3)
@@ -549,7 +558,8 @@ def main():
 			if any(right_idx in reverse_connected_map and reverse_connected_map[right_idx] in inlier_indices for right_idx in uniques[connected_map[idx]])]
 		#inlier_quads = [quads[idx] for idx in filtered_inlier_indices]
 		# FIXME: Scanning the quads should not be necessary to filter.
-		inlier_quads = [quad for (idx, quad) in enumerate(quads + quads_rot) if idx % len(quads) in filtered_inlier_indices]
+		inlier_quads = [quad for (idx, quad) in enumerate(quads + quads_rot)
+			if regressor.inlier_mask_[idx] and idx % len(quads) in filtered_inlier_indices]
 		cv2.imshow(WINNAME, working)
 		key = cv2.waitKey(1)
 		if len(inlier_quads) < 3:
@@ -563,13 +573,16 @@ def main():
 		target_pts = [[dim for corner in quad for dim in corner] for quad in inlier_quads]
 		training_pts = [(0,) for i in range(len(inlier_quads))]
 		estimator.fit(target_pts, training_pts)
+		(vp1n, vp2n) = estimator.vps
+		(vp1, vp2) = get_vps(inlier_quads)
+		print('vps-numerical', tuple(vp1n), tuple(vp2n))
+		print('vps-analytical', tuple(vp1), tuple(vp2))
 
-		(vp1, vp2) = estimator.vps
+
 		working = numpy.copy(color3)
 		left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
 		right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
 		#inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]
-		print('vps', tuple(vp1), tuple(vp2))
 		#print('quads', len(inlier_quads))
 		cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
 		cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
@@ -1404,21 +1417,32 @@ def get_perimeter(contour):
 def get_best_intersection(segments):
 	dims = segments.shape[1]
 	vectors = (end - begin for (begin, end) in segments)
-	horizon_norm = numpy.linalg.norm(horizon)
-	measured_vectors = ((vector, numpy.linalg.norm(vector))  for vector in vectors)
+	measured_vectors = ((vector, numpy.linalg.norm(vector)) for vector in vectors)
 	unit_vectors = [vector / mag if mag != 0. else numpy.zeros(dims)
 		for (vector, mag) in measured_vectors]
+	pivots = (numpy.mean(segment) for segment in segments)
 	diagonals = numpy.eye(dims)
 	sums = numpy.array([[
 		sum(vector[dimx] * vector[dimy] - diagonals[dimy][dimx] for vector in unit_vectors)
 		for dimx in range(dims)]
 		for dimy in range(dims)])
 	begins = numpy.array([
-		sum(segment[0][dimx] * vector[dimx] * vector[dimy] - diagonals[dimy][dimx]
+		sum(segment[0][dimx] * (vector[dimx] * vector[dimy] - diagonals[dimy][dimx])
 		for dimx in range(dims) for (segment, vector) in zip(segments, unit_vectors))
 		for dimy in range(dims)])
-	intersect = numpy.linalg.lstsq(sums, begins).reshape(dims)
+	#print('sums', sums)
+	#print('begins', begins)
+	result = numpy.linalg.lstsq(sums, begins)
+	#print('lstsq result', result)
+	intersect = result[0].reshape(dims)
 	return intersect
+
+
+def get_vps(quads):
+	return (
+		get_best_intersection(numpy.array([vector for pair in ([quad[0:2], quad[2:4]] for quad in quads) for vector in pair])),
+		get_best_intersection(numpy.array([vector for pair in ([quad[1:3], [quad[3], quad[0]]] for quad in quads) for vector in pair])),
+	)
 
 
 if __name__ == "__main__":
