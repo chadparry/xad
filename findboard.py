@@ -17,6 +17,7 @@ import skimage.transform
 import sklearn.base
 import sklearn.linear_model
 import sys
+import traceback
 
 
 WINNAME = 'Chess Transcription'
@@ -239,6 +240,26 @@ def main():
 
 	color3 = numpy.copy(color2)
 
+	sample_quads = [[(801.53982300884957, 516.07964601769902), (791.97247706422024, 496.94495412844037), (733.93561103810771, 498.01971090670173), (740.0, 515.0)], [(868.81612284069104, 632.05873320537432), (848.0, 597.0), (767.74193548387098, 597.0), (782.0, 631.0)], [(539.98549556809019, 537.0459307010475), (546.93766011955586, 515.03074295473959), (482.04838709677421, 512.90322580645159), (470.51145038167942, 535.97709923664115)]]
+	#(vp1, vp2) = get_vps(sample_quads)
+	(vp1, vp2) = get_best_intersection_by_angle5_quads(sample_quads)
+	print('vps', (vp1, vp2))
+	working = numpy.copy(color2)
+	cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in sample_quad]) for sample_quad in sample_quads]), -1, 255, 2)
+	cv2.line(working, tuple(int(dim) for dim in sample_quads[0][1]), tuple(int(dim) for dim in sample_quads[0][2]), (0,255,0), 1)
+	for quad in sample_quads:
+		for (point_idx, vp) in [(0, vp1), (1, vp2), (2, vp1), (3, vp2)]:
+		#for (point_idx, vp) in [(1, vp2), (3, vp2)]:
+			point = numpy.mean([quad[point_idx], quad[(point_idx + 1) % len(quad)]], axis=0)
+			cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
+	cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+	cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+	cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 4)
+
+	cv2.imshow(WINNAME, working)
+	cv2.waitKey(0)
+
+	return
 
 	# TODO: Once the board is found, use MSER to track it
 
@@ -368,17 +389,18 @@ def main():
 			else:
 				seed = [dim for vp in provided_seed for dim in vp]
 
-			res = scipy.optimize.minimize(lambda x: optimizer(x), seed, method='L-BFGS-B', tol=tol)
-			if not res.success:
-				self.vps = None
-				return self
-			fitted = res.x
-			self.vps = numpy.array(grouper(fitted, 2))
+			#res = scipy.optimize.minimize(lambda x: optimizer(x), seed, method='L-BFGS-B', tol=tol)
+			#if not res.success:
+			#	self.vps = None
+			#	return self
+			#fitted = res.x
+			#self.vps = numpy.array(grouper(fitted, 2))
+			self.vps = get_vps(sample_quads)
+			return self
 
 			err = self.objective(sample_quads, fitted)
 			print('err', err)
 			#print('optimization done')
-
 			(vp1, vp2) = (numpy.array(vp) for vp in grouper(fitted, 2))
 			working = numpy.copy(color3)
 			cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in sample_quad]) for sample_quad in sample_quads]), -1, 255, 2)
@@ -386,7 +408,13 @@ def main():
 			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
 
-			(vp1, vp2) = get_vps(sample_quads)
+			try:
+				(vp1, vp2) = get_vps(sample_quads, self.vps)
+			except ValueError as e:
+				print('Failed: ' + str(e))
+				raise
+			if any(abs(dim) > 1e9 for vp in (vp1, vp2) for dim in vp):
+				return self
 			for quad in sample_quads:
 				for point in quad:
 					for vp in (vp1, vp2):
@@ -1414,13 +1442,12 @@ def get_perimeter(contour):
 	return sum(numpy.linalg.norm(end - start) for (start, end) in pairs)
 
 
-def get_best_intersection(segments):
+def get_best_intersection_by_dist(segments):
 	dims = segments.shape[1]
 	vectors = (end - begin for (begin, end) in segments)
 	measured_vectors = ((vector, numpy.linalg.norm(vector)) for vector in vectors)
 	unit_vectors = [vector / mag if mag != 0. else numpy.zeros(dims)
 		for (vector, mag) in measured_vectors]
-	pivots = (numpy.mean(segment) for segment in segments)
 	diagonals = numpy.eye(dims)
 	sums = numpy.array([[
 		sum(vector[dimx] * vector[dimy] - diagonals[dimy][dimx] for vector in unit_vectors)
@@ -1438,10 +1465,333 @@ def get_best_intersection(segments):
 	return intersect
 
 
-def get_vps(quads):
+def get_best_intersection_by_angle1(segments, precalculated=None):
+	""" Solve for d = 1 - (x/|x|) . n and
+	df/dp = 2 * (1 - (x/|x|) . n) * (I * |x| - x * (x^T/|x|)) . n, x = a - p"""
+	print('******************** get_best_intersection_by_angle1')
+	dims = segments.shape[1]
+	print('SEGMENTS', segments)
+	vectors = [end - begin for (begin, end) in segments]
+	print('VECTORS', vectors)
+	vector_dists = (numpy.linalg.norm(vector) for vector in vectors)
+	vector_dists = list(vector_dists)
+	print('VECTOR_DISTS', vector_dists)
+	# n ~ unit_vectors
+	unit_vectors = [vector / vector_dist if vector_dist != 0. else numpy.zeros(dims)
+		for (vector, vector_dist) in zip(vectors, vector_dists)]
+	print('UNIT_VECTORS_INPUT', unit_vectors)
+	pivots = [numpy.mean(segment, axis=0) for segment in segments]
+	# FIXME: Should this be numpy.eye(dims) ?
+	one = numpy.ones(dims)
+
+	seed = numpy.mean(pivots, axis=0)
+	context = (unit_vectors, pivots)
+	def objective(vp, unit_vectors, pivots):
+		print('--- OBJECTIVE')
+		print('vp', repr(vp))
+		print('unit_vectors', repr(unit_vectors))
+		print('pivots', repr(pivots))
+		reaches = [vp - pivot for pivot in pivots]
+		dists = (numpy.linalg.norm(reach) for reach in reaches)
+		unit_reaches = (reach/dist if dist != 0. else numpy.zeros(reach.shape)
+			for (reach, dist) in zip(reaches, dists))
+		unit_reaches = list(unit_reaches)
+		print('unit_reaches', repr(unit_reaches))
+		# FIXME: Because of the "abs", there are local minima!
+		residuals = [1 - abs(numpy.dot(unit_reach, unit_vector))
+			for (unit_vector, unit_reach) in zip(unit_vectors, unit_reaches)]
+		print('residuals', residuals)
+		print('sum-squares', sum(residual**2 for residual in residuals))
+		return residuals
+	def jacobian(vp, unit_vectors, pivots):
+		reaches = [vp - pivot for pivot in pivots]
+		dists = [numpy.linalg.norm([pivot, vp]) for reach in reaches]
+		unit_reaches = (reach/dist if dist != 0. else numpy.zeros(reach.shape)
+			for (reach, dist) in zip(reaches, dists))
+		outers = (numpy.outer(reach, reach) / dist for (reach, dist) in zip(reaches, dists))
+		return [2 * (1 - numpy.dot(unit_reach, unit_vector)) *
+			numpy.dot(one * dist - outer, unit_vector)
+			for (unit_vector, unit_reach, dist, outer) in
+				zip(unit_vectors, unit_reaches, dists, outers)]
+	# FIXME
+	jacobian = None
+	try:
+		result = scipy.optimize.leastsq(objective, seed, context, jacobian)
+		print('leastsq result', result)
+		if precalculated is not None:
+			print('precalculated vp', precalculated)
+			print('precalculated objective', objective(precalculated, unit_vectors, pivots))
+		intersect = result[0]
+		return intersect
+	except:
+		print('exception', sys.exc_info()[0], traceback.format_exc())
+
+
+def get_distance(S, p, C):
+	d = numpy.dot(S, p) - C
+	return (sum(e**2 for e in d), d)
+
+def get_best_intersection_by_angle2(segments, precalculated=None):
+	""" Solve for MIN [ D = (b - a) . (x - a) ] where (b-a) is perpendicular to the segment,
+	or d/dx D^2 = (b - a) . x - (b - a) . a = 0
+	"""
+	print('******************** get_best_intersection_by_angle2')
+	dims = segments.shape[1]
+	vectors = (end - begin for (begin, end) in segments)
+	pivots = (numpy.mean(segment, axis=0) for segment in segments)
+	measured_vectors = ((vector, numpy.linalg.norm(vector)) for vector in vectors)
+	unit_vectors = (vector / mag if mag != 0. else numpy.zeros(dims)
+		for (vector, mag) in measured_vectors)
+	perpendicular_unit_vectors = [numpy.array([vector[1], -vector[0]])
+		for vector in unit_vectors]
+	products = [numpy.dot(vector, pivot)
+		for (vector, pivot) in zip(perpendicular_unit_vectors, pivots)]
+	print('perpendicular_unit_vectors', perpendicular_unit_vectors)
+	print('products', products)
+	result = numpy.linalg.lstsq(perpendicular_unit_vectors, products)
+	print('lstsq result', result)
+	intersect = result[0]
+	print('intersect', intersect)
+	print('analytical distances', get_distance(perpendicular_unit_vectors, intersect, products))
+	print('numerical distances', get_distance(perpendicular_unit_vectors, [1000., 548.87250946], products))
+	return intersect
+
+
+def get_best_intersection_by_angle3(segments, precalculated=None):
+	""" Solve for MIN [ D = ((b - a) . (x - a)) / ||x - a|| ]
+	or d/dx D^2 = ((b - a) . (x - a)) * (||x - a|| - ((b - a) . (x - a))) = 0"""
+	print('******************** get_best_intersection_by_angle3')
+	dims = segments.shape[1]
+	print('SEGMENTS', segments)
+	vectors = [end - begin for (begin, end) in segments]
+	print('VECTORS', vectors)
+	vector_dists = (numpy.linalg.norm(vector) for vector in vectors)
+	vector_dists = list(vector_dists)
+	print('VECTOR_DISTS', vector_dists)
+	unit_vectors = (vector / vector_dist if vector_dist != 0. else numpy.zeros(dims)
+		for (vector, vector_dist) in zip(vectors, vector_dists))
+	unit_vectors = list(unit_vectors)
+	# pivots ~ a
+	pivots = [numpy.mean(segment, axis=0) for segment in segments]
+	# perpendicular_unit_vectors ~ b - a
+	perpendicular_unit_vectors = [numpy.array([vector[1], -vector[0]])
+		for vector in unit_vectors]
+	# products ~ (b - a) . a
+	products = [numpy.dot(vector, pivot)
+		for (vector, pivot) in zip(perpendicular_unit_vectors, pivots)]
+	print('PERPENDICULAR_UNIT_VECTORS_INPUT', perpendicular_unit_vectors)
+
+	seed = numpy.mean(pivots, axis=0)
+	#seed[0] = seed[0] + 1000
+	context = (perpendicular_unit_vectors, pivots)
+	def objective(vp, unit_vectors, pivots):
+		print('--- OBJECTIVE')
+		print('vp', repr(vp))
+		print('perpendicular_unit_vectors', repr(perpendicular_unit_vectors))
+		print('pivots', repr(pivots))
+		# reaches ~ x - a
+		reaches = [vp - pivot for pivot in pivots]
+		reach_dists = (numpy.linalg.norm(reach) for reach in reaches)
+		unit_reaches = (reach/reach_dist if reach_dist != 0. else numpy.zeros(reach.shape)
+			for (reach, reach_dist) in zip(reaches, reach_dists))
+		unit_reaches = list(unit_reaches)
+		print('unit_reaches', repr(unit_reaches))
+		projections = (numpy.dot(perpendicular_unit_vector, reach)
+			for (perpendicular_unit_vector, reach) in
+			#zip(perpendicular_unit_vectors, reaches))
+			zip(unit_vectors, reaches))
+		projections = list(projections)
+		print('projections', projections)
+		residuals = [math.asin(projection / numpy.linalg.norm(reach)) * 180. / math.pi
+			for (projection, reach) in zip(projections, reaches)]
+		print('residuals', residuals)
+		print('sum-squares', sum(residual**2 for residual in residuals))
+		return residuals
+	# FIXME
+	jacobian = None
+	try:
+		result = scipy.optimize.leastsq(objective, seed, context, jacobian)
+		print('leastsq result', result)
+		if precalculated is not None:
+			print('precalculated vp', precalculated)
+			print('precalculated objective', objective(precalculated, unit_vectors, pivots))
+		intersect = result[0]
+		return intersect
+	except:
+		print('exception', sys.exc_info()[0], traceback.format_exc())
+
+
+
+def get_best_intersection_by_angle4(segments, precalculated=None):
+	print('******************** get_best_intersection_by_angle4')
+	dims = segments.shape[1]
+	print('SEGMENTS', segments)
+	vectors = [end - begin for (begin, end) in segments]
+	print('VECTORS', vectors)
+	vector_dists = (numpy.linalg.norm(vector) for vector in vectors)
+	vector_dists = list(vector_dists)
+	print('VECTOR_DISTS', vector_dists)
+	unit_vectors = (vector / vector_dist if vector_dist != 0. else numpy.zeros(dims)
+		for (vector, vector_dist) in zip(vectors, vector_dists))
+	unit_vectors = list(unit_vectors)
+	# pivots ~ a
+	pivots = [numpy.mean(segment, axis=0) for segment in segments]
+	# perpendicular_unit_vectors ~ b - a
+	perpendicular_unit_vectors = [numpy.array([vector[1], -vector[0]])
+		for vector in unit_vectors]
+	# products ~ (b - a) . a
+	products = [numpy.dot(vector, pivot)
+		for (vector, pivot) in zip(perpendicular_unit_vectors, pivots)]
+	print('PERPENDICULAR_UNIT_VECTORS_INPUT', perpendicular_unit_vectors)
+
+	seed = numpy.mean(pivots, axis=0)
+	#seed[0] = seed[0] + 1000
+	context = (perpendicular_unit_vectors, pivots)
+	def objective(vp, unit_vectors, pivots):
+		print('--- OBJECTIVE')
+		print('vp', repr(vp))
+		print('perpendicular_unit_vectors', repr(perpendicular_unit_vectors))
+		print('pivots', repr(pivots))
+		# reaches ~ x - a
+		reaches = [vp - pivot for pivot in pivots]
+		residuals = [angle_between(vector, reach)
+			for (vector, reach) in zip(vectors, reaches)]
+		print('residuals', residuals)
+		print('sum-squares', sum(residual**2 for residual in residuals))
+		return residuals
+	# FIXME
+	jacobian = None
+	try:
+		result = scipy.optimize.leastsq(objective, seed, context, jacobian)
+		print('leastsq result', result)
+		if precalculated is not None:
+			print('precalculated vp', precalculated)
+			print('precalculated objective', objective(precalculated, unit_vectors, pivots))
+		intersect = result[0]
+		return intersect
+	except:
+		print('exception', sys.exc_info()[0], traceback.format_exc())
+
+
+def get_best_intersection_by_angle5(segments, precalculated=None):
+	#print('******************** get_best_intersection_by_angle5')
+	#print('SEGMENTS', segments)
+	#return get_best_intersection_by_angle5_inner(segments)
+	segments_flipped = ([[segment[1], segment[0]] if flip else segment
+		for (segment, flip) in zip(segments, orientation)]
+		for orientation in itertools.product((False, True), repeat=len(segments)))
+	costs = (get_best_intersection_by_angle5_inner(numpy.array(segments)) for segments in segments_flipped)
+	best = min(costs, key=lambda cost: cost[0])
+	#print('BEST', best)
+	return best[1]
+
+
+def get_best_intersection_by_angle5_quads(quads):
+	#print('******************** get_best_intersection_by_angle5')
+	#print('SEGMENTS', segments)
+
+	# The combination where all quads are rotated is symmetric.
+	# So the first quad should never be rotated.
+	rotations = (itertools.chain((False,), rotation)
+		for rotation in itertools.product((False, True), repeat=len(quads) - 1))
+	quads_rotated = ([quad[1:] + quad[:1] if rotate else quad
+		for (quad, rotate) in zip(quads, rotation)] for rotation in rotations)
+	quads_rotated = list(quads_rotated)
+	costs = (get_best_intersection_by_angle5_rotated_quads(quads) for quads in quads_rotated)
+	best = min(costs, key=lambda cost: cost[0])
+	print('COST', best[0])
+	return best[1]
+
+
+def get_best_intersection_by_angle5_rotated_quads(quads):
+	(cost1, vp1) = get_best_intersection_by_angle5_vp(quads)
+	(cost2, vp2) = get_best_intersection_by_angle5_vp([quad[1:] + quad[:1] for quad in quads])
+
+	return (cost1 + cost2, (vp1, vp2))
+
+
+def get_best_intersection_by_angle5_vp(quads):
+	orientations = itertools.product((False, True), repeat=len(quads))
+	segments_oriented = ([[[quad[1], quad[0]], [quad[2], quad[3]]] if flip else [[quad[0], quad[1]], [quad[3], quad[2]]]
+		for (quad, flip) in zip(quads, orientation)]
+		for orientation in orientations)
+	segments_flattened = ([segment for pair in segments for segment in pair] for segments in segments_oriented)
+	costs = (get_best_intersection_by_angle5_segments(numpy.array(segments))
+		for segments in segments_flattened)
+	best = min(costs, key=lambda cost: cost[0])
+	return best
+
+
+def get_best_intersection_by_angle5_segments(segments):
+	""" Solve for d = 1 - ((V - P) / |V - P|) . S, and
+	del d = (V - P) . S / |V - P|^3 * (V - P) - S / |V - P|"""
+	#print('SEGMENTS', segments)
+	dims = segments.shape[1]
+	vectors = [end - begin for (begin, end) in segments]
+	#print('VECTORS', vectors)
+	vector_dists = (numpy.linalg.norm(vector) for vector in vectors)
+	vector_dists = list(vector_dists)
+	#print('VECTOR_DISTS', vector_dists)
+	# S ~ unit_vectors
+	unit_vectors = [vector / vector_dist if vector_dist != 0. else numpy.zeros(dims)
+		for (vector, vector_dist) in zip(vectors, vector_dists)]
+	#print('UNIT_VECTORS_INPUT', unit_vectors)
+	# FIXME: This recalculates a lot of the same values as other orientations of this same quad
+	# P ~ pivots
+	pivots = [segment[0] for segment in segments]
+	#pivots = [numpy.mean(segment, axis=0) for segment in segments]
+	# FIXME: Should this be numpy.eye(dims) ?
+	one = numpy.ones(dims)
+
+	seed = numpy.mean(pivots, axis=0)
+	context = (unit_vectors, pivots)
+	def objective(vp, unit_vectors, pivots):
+		#print('objective iter:', i[0])
+		#print('--- OBJECTIVE')
+		#print('vp', repr(vp))
+		#print('unit_vectors', repr(unit_vectors))
+		#print('pivots', repr(pivots))
+		reaches = [pivot - vp for pivot in pivots]
+		dists = (numpy.linalg.norm(reach) for reach in reaches)
+		unit_reaches = (reach/dist if dist != 0. else numpy.zeros(reach.shape)
+			for (reach, dist) in zip(reaches, dists))
+		unit_reaches = list(unit_reaches)
+		#print('unit_reaches', repr(unit_reaches))
+		residuals = [1 - numpy.dot(unit_reach, unit_vector)
+			for (unit_vector, unit_reach) in zip(unit_vectors, unit_reaches)]
+		#print('residuals', residuals)
+		#print('sum-squares', sum(residual**2 for residual in residuals))
+		return numpy.array(residuals)
+	def jacobian(vp, unit_vectors, pivots):
+		reaches = [vp - pivot for pivot in pivots]
+		mag_reaches = [numpy.linalg.norm(reach) for reach in reaches]
+		j = [numpy.dot(reach, unit_vector) / mag_reach**3 * reach - unit_vector / mag_reach
+			for (unit_vector, reach, mag_reach) in
+				zip(unit_vectors, reaches, mag_reaches)]
+		#print('js', numpy.array(j).shape)
+		#print('j', j, numpy.array(j).reshape((2, 6)))
+		return -numpy.array(j)
+	# FIXME
+	#jacobian = None
+	try:
+		#grad_err = scipy.optimize.check_grad(objective, jacobian, seed, *context)
+		#print('grad_err', grad_err)
+		#result = scipy.optimize.leastsq(objective, seed, context, jacobian, col_deriv=True)
+		result = scipy.optimize.leastsq(objective, seed, context, jacobian)
+		#print('leastsq result', result)
+		intersect = result[0]
+		residuals = objective(intersect, unit_vectors, pivots)
+		cost = sum(residual**2 for residual in residuals)
+		return (cost, intersect)
+	except:
+		print('exception', sys.exc_info()[0], traceback.format_exc())
+		raise
+
+
+def get_vps(quads, precalculated=[None,None]):
 	return (
-		get_best_intersection(numpy.array([vector for pair in ([quad[0:2], quad[2:4]] for quad in quads) for vector in pair])),
-		get_best_intersection(numpy.array([vector for pair in ([quad[1:3], [quad[3], quad[0]]] for quad in quads) for vector in pair])),
+		get_best_intersection_by_angle3(numpy.array([vector for pair in ([quad[0:2], quad[2:4]] for quad in quads) for vector in pair]), precalculated[0]),
+		get_best_intersection_by_angle3(numpy.array([vector for pair in ([quad[1:3], [quad[3], quad[0]]] for quad in quads) for vector in pair]), precalculated[1]),
 	)
 
 
