@@ -237,32 +237,9 @@ def main():
 	#cv2.imshow(WINNAME, contlines)
 	#key = cv2.waitKey(0)
 
-
-	color3 = numpy.copy(color2)
-
-	sample_quads = [[(801.53982300884957, 516.07964601769902), (791.97247706422024, 496.94495412844037), (733.93561103810771, 498.01971090670173), (740.0, 515.0)], [(868.81612284069104, 632.05873320537432), (848.0, 597.0), (767.74193548387098, 597.0), (782.0, 631.0)], [(539.98549556809019, 537.0459307010475), (546.93766011955586, 515.03074295473959), (482.04838709677421, 512.90322580645159), (470.51145038167942, 535.97709923664115)]]
-	#(vp1, vp2) = get_vps(sample_quads)
-	(vp1, vp2) = get_best_intersection_by_angle5_quads(sample_quads)
-	print('vps', (vp1, vp2))
-	working = numpy.copy(color2)
-	cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in sample_quad]) for sample_quad in sample_quads]), -1, 255, 2)
-	cv2.line(working, tuple(int(dim) for dim in sample_quads[0][1]), tuple(int(dim) for dim in sample_quads[0][2]), (0,255,0), 1)
-	for quad in sample_quads:
-		for (point_idx, vp) in [(0, vp1), (1, vp2), (2, vp1), (3, vp2)]:
-		#for (point_idx, vp) in [(1, vp2), (3, vp2)]:
-			point = numpy.mean([quad[point_idx], quad[(point_idx + 1) % len(quad)]], axis=0)
-			cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
-	cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
-	cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
-	cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 4)
-
-	cv2.imshow(WINNAME, working)
-	cv2.waitKey(0)
-
-	return
-
 	# TODO: Once the board is found, use MSER to track it
 
+	color3 = numpy.copy(color2)
 
 	# FIXME: Discard any RANSAC sample sets where the furthest points are more than 9 units apart.
 	class ChessboardPerspectiveEstimator(sklearn.base.BaseEstimator, sklearn.base.RegressorMixin):
@@ -395,41 +372,25 @@ def main():
 			#	return self
 			#fitted = res.x
 			#self.vps = numpy.array(grouper(fitted, 2))
-			self.vps = get_vps(sample_quads)
-			return self
+			#self.vps = get_vps(sample_quads)
 
-			err = self.objective(sample_quads, fitted)
-			print('err', err)
-			#print('optimization done')
-			(vp1, vp2) = (numpy.array(vp) for vp in grouper(fitted, 2))
+
+			self.vps = get_best_intersection_by_angle5_quads(sample_quads)
+
+
+			(vp1, vp2) = self.vps
 			working = numpy.copy(color3)
 			cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in sample_quad]) for sample_quad in sample_quads]), -1, 255, 2)
 			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
 			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
-
-			try:
-				(vp1, vp2) = get_vps(sample_quads, self.vps)
-			except ValueError as e:
-				print('Failed: ' + str(e))
-				raise
-			if any(abs(dim) > 1e9 for vp in (vp1, vp2) for dim in vp):
-				return self
 			for quad in sample_quads:
 				for point in quad:
-					for vp in (vp1, vp2):
-						cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
-			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
-			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
-			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 4)
+					for vp in self.vps:
+						cv2.line(working, tuple(int(dim) for dim in point), tuple(int(d) for d in vp), (0,0,255), 1)
 
 			cv2.imshow(WINNAME, working)
-			if err < 3:
-				print('quads', sample_quads)
-				print('vps-numerical', self.vps)
-				key = cv2.waitKey(0)
-			else:
-				key = cv2.waitKey(1)
+			key = cv2.waitKey(1)
 
 			#print('comparison', self.objective(sample_quads, [360., 200., 6000., 240.], True))
 
@@ -448,7 +409,7 @@ def main():
 			quads = [grouper(quad, 2) for quad in X]
 			if self.vps is None:
 				return [float('inf') for quad in quads]
-			predicted = [(self.quad_error(self.vps, quad),) for quad in quads]
+			predicted = [(get_error_by_angle5_quad(self.vps, quad),) for quad in quads]
 			#print('PREDICT', X, predicted)
 			return predicted
 		def rotate_quad(self, quad, tq=None, debug=False):
@@ -1686,10 +1647,17 @@ def get_best_intersection_by_angle5(segments, precalculated=None):
 	return best[1]
 
 
+def get_error_by_angle5_quad(vps, quad):
+	quads_rotated = [quad, quad[1:] + quad[:1]]
+	costs = (get_error_by_angle5_rotated_quad(vps, quad)
+		for quad in quads_rotated)
+	best = min(costs)
+	return best
+
 def get_best_intersection_by_angle5_quads(quads):
 	#print('******************** get_best_intersection_by_angle5')
 	#print('SEGMENTS', segments)
-
+	print('quad count', len(quads))
 	# The combination where all quads are rotated is symmetric.
 	# So the first quad should never be rotated.
 	rotations = (itertools.chain((False,), rotation)
@@ -1701,6 +1669,11 @@ def get_best_intersection_by_angle5_quads(quads):
 	best = min(costs, key=lambda cost: cost[0])
 	print('COST', best[0])
 	return best[1]
+
+def get_error_by_angle5_rotated_quad(vps, quad):
+	cost1 = get_error_by_angle5_vp(vps[0], quad)
+	cost2 = get_error_by_angle5_vp(vps[1], quad[1:] + quad[:1])
+	return cost1 + cost2
 
 
 def get_best_intersection_by_angle5_rotated_quads(quads):
@@ -1721,6 +1694,37 @@ def get_best_intersection_by_angle5_vp(quads):
 	best = min(costs, key=lambda cost: cost[0])
 	return best
 
+def get_error_by_angle5_vp(vp, quad):
+	quads = [quad]
+	orientations = itertools.product((False, True), repeat=len(quads))
+	segments_oriented = ([[[quad[1], quad[0]], [quad[2], quad[3]]] if flip else [[quad[0], quad[1]], [quad[3], quad[2]]]
+		for (quad, flip) in zip(quads, orientation)]
+		for orientation in orientations)
+	segments_flattened = ([segment for pair in segments for segment in pair] for segments in segments_oriented)
+	costs = (get_error_by_angle5_segments(vp, numpy.array(segments))
+		for segments in segments_flattened)
+	best = min(costs)
+	return best
+
+
+
+def get_best_intersection_by_angle5_objective(vp, unit_vectors, pivots):
+	#print('objective iter:', i[0])
+	#print('--- OBJECTIVE')
+	#print('vp', repr(vp))
+	#print('unit_vectors', repr(unit_vectors))
+	#print('pivots', repr(pivots))
+	reaches = [pivot - vp for pivot in pivots]
+	dists = (numpy.linalg.norm(reach) for reach in reaches)
+	unit_reaches = (reach/dist if dist != 0. else numpy.zeros(reach.shape)
+		for (reach, dist) in zip(reaches, dists))
+	unit_reaches = list(unit_reaches)
+	#print('unit_reaches', repr(unit_reaches))
+	residuals = [1 - numpy.dot(unit_reach, unit_vector)
+		for (unit_vector, unit_reach) in zip(unit_vectors, unit_reaches)]
+	#print('residuals', residuals)
+	#print('sum-squares', sum(residual**2 for residual in residuals))
+	return numpy.array(residuals)
 
 def get_best_intersection_by_angle5_segments(segments):
 	""" Solve for d = 1 - ((V - P) / |V - P|) . S, and
@@ -1745,23 +1749,6 @@ def get_best_intersection_by_angle5_segments(segments):
 
 	seed = numpy.mean(pivots, axis=0)
 	context = (unit_vectors, pivots)
-	def objective(vp, unit_vectors, pivots):
-		#print('objective iter:', i[0])
-		#print('--- OBJECTIVE')
-		#print('vp', repr(vp))
-		#print('unit_vectors', repr(unit_vectors))
-		#print('pivots', repr(pivots))
-		reaches = [pivot - vp for pivot in pivots]
-		dists = (numpy.linalg.norm(reach) for reach in reaches)
-		unit_reaches = (reach/dist if dist != 0. else numpy.zeros(reach.shape)
-			for (reach, dist) in zip(reaches, dists))
-		unit_reaches = list(unit_reaches)
-		#print('unit_reaches', repr(unit_reaches))
-		residuals = [1 - numpy.dot(unit_reach, unit_vector)
-			for (unit_vector, unit_reach) in zip(unit_vectors, unit_reaches)]
-		#print('residuals', residuals)
-		#print('sum-squares', sum(residual**2 for residual in residuals))
-		return numpy.array(residuals)
 	def jacobian(vp, unit_vectors, pivots):
 		reaches = [vp - pivot for pivot in pivots]
 		mag_reaches = [numpy.linalg.norm(reach) for reach in reaches]
@@ -1776,16 +1763,27 @@ def get_best_intersection_by_angle5_segments(segments):
 	try:
 		#grad_err = scipy.optimize.check_grad(objective, jacobian, seed, *context)
 		#print('grad_err', grad_err)
-		#result = scipy.optimize.leastsq(objective, seed, context, jacobian, col_deriv=True)
-		result = scipy.optimize.leastsq(objective, seed, context, jacobian)
+		#result = scipy.optimize.leastsq(get_best_intersection_by_angle5_objective, seed, context, jacobian, col_deriv=True)
+		result = scipy.optimize.leastsq(get_best_intersection_by_angle5_objective, seed, context, jacobian)
 		#print('leastsq result', result)
 		intersect = result[0]
-		residuals = objective(intersect, unit_vectors, pivots)
+		residuals = get_best_intersection_by_angle5_objective(intersect, unit_vectors, pivots)
 		cost = sum(residual**2 for residual in residuals)
 		return (cost, intersect)
 	except:
 		print('exception', sys.exc_info()[0], traceback.format_exc())
 		raise
+
+def get_error_by_angle5_segments(vp, segments):
+	vectors = [end - begin for (begin, end) in segments]
+	vector_dists = (numpy.linalg.norm(vector) for vector in vectors)
+	vector_dists = list(vector_dists)
+	unit_vectors = [vector / vector_dist if vector_dist != 0. else numpy.zeros(dims)
+		for (vector, vector_dist) in zip(vectors, vector_dists)]
+	pivots = [segment[0] for segment in segments]
+	residuals = get_best_intersection_by_angle5_objective(vp, unit_vectors, pivots)
+	cost = sum(residual**2 for residual in residuals)
+	return cost
 
 
 def get_vps(quads, precalculated=[None,None]):
