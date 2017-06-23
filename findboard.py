@@ -27,14 +27,15 @@ def grouper(iterable, n):
 	args = [iter(iterable)] * n
 	return zip(*args)
 
+color_global = None
 
 def main():
 
 	cv2.namedWindow(WINNAME)
 
 	#webcam = cv2.VideoCapture(0)
-	#webcam = cv2.VideoCapture('/usr/local/src/CVChess/data/videos/1.mov')
-	webcam = cv2.VideoCapture('idaho.webm')
+	webcam = cv2.VideoCapture('/usr/local/src/CVChess/data/videos/1.mov')
+	#webcam = cv2.VideoCapture('idaho.webm')
 	if not webcam.isOpened():
 		raise RuntimeError('Failed to open camera')
 
@@ -57,6 +58,8 @@ def main():
 	img2 = cv2.cvtColor(color2, cv2.COLOR_BGR2GRAY)
 	#cv2.imshow(WINNAME, color2)
 	#key = cv2.waitKey(0)
+	global color_global
+	color_global = numpy.copy(color2)
 
 	refimg = cv2.cvtColor(refimgbw, cv2.COLOR_GRAY2BGR)
 	#cv2.imshow(WINNAME, refimg)
@@ -153,7 +156,7 @@ def main():
 			continue
 
 		# Remove bookshelf contours
-		#if approx[0][0][1] < 300:
+		#if approx[0][1] < 300:
 		#	continue
 
 		approxes.append(approx)
@@ -375,10 +378,17 @@ def main():
 			#self.vps = get_vps(sample_quads)
 
 
-			self.vps = get_best_intersection_by_angle5_quads(sample_quads)
+			self.vps = get_best_intersection_by_angle5_quads(sample_quads, tol)
+			delay = 1
+			if self.vps is None:
+				return self
+
 
 
 			(vp1, vp2) = self.vps
+			if any(dim > 1e9 or dim < -1e9 for vp in self.vps for dim in vp):
+				print('overflow', self.vps)
+				return self
 			working = numpy.copy(color3)
 			cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in sample_quad]) for sample_quad in sample_quads]), -1, 255, 2)
 			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
@@ -390,8 +400,10 @@ def main():
 						cv2.line(working, tuple(int(dim) for dim in point), tuple(int(d) for d in vp), (0,0,255), 1)
 
 			cv2.imshow(WINNAME, working)
-			key = cv2.waitKey(1)
+			key = cv2.waitKey(delay)
 
+			if delay == 0:
+				self.vps = None
 			#print('comparison', self.objective(sample_quads, [360., 200., 6000., 240.], True))
 
 			# FIXME
@@ -400,16 +412,19 @@ def main():
 
 			return self
 		def score(self, X, y):
-			s = super(ChessboardPerspectiveEstimator, self).score(X, y)
-			#print('score', s)
+			#s = super(ChessboardPerspectiveEstimator, self).score(X, y)
+			s = 1 - sum(cost[0] ** 2 for cost in self.predict(X))
+			print('score', s, self.vps, len(X))
 			#print('SCORE', X, y, s)
 			return s
 		def predict(self, X):
-			#print('predict')
+			#print('predict', self.vps, len(X))
 			quads = [grouper(quad, 2) for quad in X]
 			if self.vps is None:
 				return [float('inf') for quad in quads]
 			predicted = [(get_error_by_angle5_quad(self.vps, quad),) for quad in quads]
+			scores = sorted(s[0]**2 for s in predicted)
+			print('predict', len(X), scores[:3], scores[-3:])
 			#print('PREDICT', X, predicted)
 			return predicted
 		def rotate_quad(self, quad, tq=None, debug=False):
@@ -502,8 +517,8 @@ def main():
 				base_estimator=ChessboardPerspectiveEstimator(tol=math.pi/360., shape=color3.shape),
 				min_samples=3,
 				residual_metric=lambda dy: numpy.sum(dy**2, axis=1),
-				# Each segment has only 3 degrees of allowed error on average.
-				residual_threshold=math.pi/15.,
+				# FIXME: Each segment has only 3 degrees of allowed error on average.
+				residual_threshold=(math.pi/30.)**4,
 				#residual_threshold=threshold,
 				max_trials=retries,
 			)
@@ -519,8 +534,12 @@ def main():
 					retries = 0
 				if retries <= 0:
 					raise
+		vps = regressor.estimator_.vps
+		if vps is None:
+			raise RuntimeError('Inliers not found')
 
-		(vp1, vp2) = regressor.estimator_.vps
+		print('retries', retries, regressor.n_trials_)
+		(vp1, vp2) = vps
 		working = numpy.copy(color3)
 		left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
 		right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
@@ -1652,12 +1671,15 @@ def get_error_by_angle5_quad(vps, quad):
 	costs = (get_error_by_angle5_rotated_quad(vps, quad)
 		for quad in quads_rotated)
 	best = min(costs)
+	#print('get_error_by_angle5_quad', best)
 	return best
 
-def get_best_intersection_by_angle5_quads(quads):
-	#print('******************** get_best_intersection_by_angle5')
-	#print('SEGMENTS', segments)
-	print('quad count', len(quads))
+hunts = 0
+hunts_inner = 0
+def get_best_intersection_by_angle5_quads_exponential(quads):
+	global hunts
+	hunts = 0
+	#print('******************** get_best_intersection_by_angle5_quads_exponential')
 	# The combination where all quads are rotated is symmetric.
 	# So the first quad should never be rotated.
 	rotations = (itertools.chain((False,), rotation)
@@ -1667,8 +1689,162 @@ def get_best_intersection_by_angle5_quads(quads):
 	quads_rotated = list(quads_rotated)
 	costs = (get_best_intersection_by_angle5_rotated_quads(quads) for quads in quads_rotated)
 	best = min(costs, key=lambda cost: cost[0])
-	print('COST', best[0])
+	#print('COST', best[0])
+	print('hunts', len(quads), hunts)
 	return best[1]
+
+def get_all_orientations(quad):
+	# FIXME: Calculate rather than hard-code these indices
+	return [
+		# Unrotated
+		(
+			# VP 1
+			[
+				# Unflipped
+				[[quad[0], quad[1]], [quad[3], quad[2]]],
+				# Flipped
+				[[quad[1], quad[0]], [quad[2], quad[3]]],
+			],
+			# VP 2
+			[
+				# Unflipped
+				[[quad[1], quad[2]], [quad[0], quad[3]]],
+				# Flipped
+				[[quad[2], quad[1]], [quad[3], quad[0]]],
+			],
+		),
+		# Rotated
+		(
+			# VP 1
+			[
+				# Unflipped
+				[[quad[1], quad[2]], [quad[0], quad[3]]],
+				# Flipped
+				[[quad[2], quad[1]], [quad[3], quad[0]]],
+			],
+			# VP 2
+			[
+				# Unflipped
+				[[quad[0], quad[1]], [quad[3], quad[2]]],
+				# Flipped
+				[[quad[1], quad[0]], [quad[2], quad[3]]],
+			],
+		),
+	]
+
+def get_best_intersection_by_angle5_quads(quads, tol=math.pi/36000.):
+	global hunts
+	hunts = 0
+	#print('******************** get_best_intersection_by_angle5_quads')
+
+	# For each VP, track the cost, coordinates, and segments
+	hypotheses = [((0, (0, 0), []), (0, (0, 0), []))]
+	is_first = True
+	for idx, quad in enumerate(quads):
+		print('hypotheses', len(hypotheses), '{}/{}'.format(idx, len(quads)))
+		if len(hypotheses) > 10 or True:
+			working = numpy.copy(color_global)
+			for hypothesis in hypotheses:
+				working = numpy.copy(color_global)
+
+				(vp1, vp2) = (hypothesis[0][1], hypothesis[1][1])
+				if any(dim > 1e9 or dim < -1e9 for vp in (vp1, vp2) for dim in vp):
+					print('overflow', (vp1, vp2))
+					continue
+				for segment in hypothesis[0][2] + hypothesis[1][2]:
+					cv2.line(working, tuple(int(p) for p in segment[0]), tuple(int(p) for p in segment[1]), (0,255,0), 2)
+
+				cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+				cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+				cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
+
+				for segment in hypothesis[0][2]:
+					for point in segment:
+						cv2.line(working, tuple(int(dim) for dim in point), tuple(int(d) for d in vp1), (0,0,255), 1)
+				for segment in hypothesis[1][2]:
+					for point in segment:
+						cv2.line(working, tuple(int(dim) for dim in point), tuple(int(d) for d in vp2), (0,0,255), 1)
+
+				print('showing err', hypothesis[0][0], hypothesis[1][0])
+				cv2.imshow(WINNAME, working)
+				key = cv2.waitKey(1)
+
+		orientations = get_all_orientations(quad)
+		if is_first:
+			orientations = itertools.islice(orientations, 1)
+			# FIXME: Set vp seed in hypotheses to the average of all segments
+			is_first = False
+		#print('***comb', sum(len(orientation) for orientation in get_all_orientations(quad)), '*', len(hypotheses))
+		attempts = ((
+			# All the qualifying checks for VP1 will need to be
+			# combined pairwise with all the qualifying checks for VP2.
+			# VP1
+			# FIXME: Use a loop comprehension to get all the flips.
+			(
+				hypothesis[0][1],
+				[
+					# Unflipped for VP 1
+					hypothesis[0][2] + orientation[0][0],
+					# Flipped for VP 1
+					hypothesis[0][2] + orientation[0][1],
+				],
+			),
+			# VP2
+			(
+				hypothesis[1][1],
+				[
+					# Unflipped for VP 2
+					hypothesis[1][2] + orientation[1][0],
+					# Flipped for VP 2
+					hypothesis[1][2] + orientation[1][1],
+				],
+			),
+		) for (hypothesis, orientation) in itertools.product(hypotheses, orientations))
+		# Measure each attempt and filter out the ones that don't qualify.
+		hypotheses = [qualifier for attempt in attempts for qualifier in measure_attempt(
+			attempt[0][0], attempt[0][1], attempt[1][0], attempt[1][1], tol, quad)]
+		if not hypotheses:
+			# Nothing qualified
+			print('None qualified', len(quads), hunts)
+			return None
+	best = min(hypotheses, key=lambda hypothesis: hypothesis[0][0] + hypothesis[1][0])
+
+	#print('costs', [hypothesis[0][0] + hypothesis[1][0] for hypothesis in hypotheses])
+	print('COST', best[0][0] + best[1][0])
+	print('HUNTS', len(quads), hunts)
+	return (best[0][1], best[1][1])
+
+# FIXME
+THRESHOLD = math.pi/120.
+# Input: [VP1 unflipped list of segments, VP1 flipped list of segments], [VP2 unflipped list of segments, VP2 flipped list of segments]
+# Output: list of each ((VP1 cost, VP1 coordinates, VP1 segments), (VP2 cost, VP2 coordinates, VP2 segments))
+def measure_attempt(vp1, vp1_attempts, vp2, vp2_attempts, tol, last_quad):
+	global hunts_inner
+	hunts_inner = 0
+	measurements1 = (measure_oriented_attempt(vp1, segments, tol) for segments in vp1_attempts)
+	measurements2 = (measure_oriented_attempt(vp2, segments, tol) for segments in vp2_attempts)
+	measurements1_filtered = (filtered[0] for filtered in measurements1 if all(segment_cost < THRESHOLD for segment_cost in filtered[1]))
+	measurements2_filtered = (filtered[0] for filtered in measurements2 if all(segment_cost < THRESHOLD for segment_cost in filtered[1]))
+	segment_count = len(vp1_attempts[1])
+	measurements1_filtered = list(measurements1_filtered)
+	measurements2_filtered = list(measurements2_filtered)
+	#print('measure_attempt', segment_count, THRESHOLD, measurements1_filtered, '----', measurements2_filtered)
+	#print('error', get_error_by_angle5_segments(measurements1_filtered[0][1], numpy.array(measurements1_filtered[0][2])), get_error_by_angle5_segments(measurements2_filtered[0][1], numpy.array(measurements2_filtered[0][2])))
+	#print('retry', segment_count, tol/10000, [measure_oriented_attempt(segments, tol/10000) for segments in vp1_attempts], '----', [measure_oriented_attempt(segments, tol/10000) for segments in vp2_attempts])
+	hypotheses = (qualifier
+		for qualifier in itertools.product(measurements1_filtered, measurements2_filtered)
+		if qualifier[0][0] + qualifier[1][0] < THRESHOLD*segment_count)
+	hypotheses = list(hypotheses)
+	#print('hunts_inner', hunts_inner)
+	return hypotheses
+
+# Input: list of segments
+# Output: ((cost, coordinates, segments), segment-costs)
+def measure_oriented_attempt(vp_seed, segments, tol):
+	(cost, vp) = get_best_intersection_by_angle5_segments(vp_seed, numpy.array(segments), tol)
+	#print('measure_oriented_attempt', cost, len(segments))
+	segment_costs = (get_error_by_angle5_segments(vp, numpy.array([segment])) for segment in segments)
+	return ((cost, vp, segments), segment_costs)
 
 def get_error_by_angle5_rotated_quad(vps, quad):
 	cost1 = get_error_by_angle5_vp(vps[0], quad)
@@ -1689,7 +1865,7 @@ def get_best_intersection_by_angle5_vp(quads):
 		for (quad, flip) in zip(quads, orientation)]
 		for orientation in orientations)
 	segments_flattened = ([segment for pair in segments for segment in pair] for segments in segments_oriented)
-	costs = (get_best_intersection_by_angle5_segments(numpy.array(segments))
+	costs = (get_best_intersection_by_angle5_segments(None, numpy.array(segments))
 		for segments in segments_flattened)
 	best = min(costs, key=lambda cost: cost[0])
 	return best
@@ -1705,7 +1881,6 @@ def get_error_by_angle5_vp(vp, quad):
 		for segments in segments_flattened)
 	best = min(costs)
 	return best
-
 
 
 def get_best_intersection_by_angle5_objective(vp, unit_vectors, pivots):
@@ -1726,9 +1901,13 @@ def get_best_intersection_by_angle5_objective(vp, unit_vectors, pivots):
 	#print('sum-squares', sum(residual**2 for residual in residuals))
 	return numpy.array(residuals)
 
-def get_best_intersection_by_angle5_segments(segments):
+hunts = 0
+hunts_inner = 0
+def get_best_intersection_by_angle5_segments(vp_seed, segments, tol):
 	""" Solve for d = 1 - ((V - P) / |V - P|) . S, and
 	del d = (V - P) . S / |V - P|^3 * (V - P) - S / |V - P|"""
+	global hunts
+	global hunts_inner
 	#print('SEGMENTS', segments)
 	dims = segments.shape[1]
 	vectors = [end - begin for (begin, end) in segments]
@@ -1747,7 +1926,7 @@ def get_best_intersection_by_angle5_segments(segments):
 	# FIXME: Should this be numpy.eye(dims) ?
 	one = numpy.ones(dims)
 
-	seed = numpy.mean(pivots, axis=0)
+	seed = numpy.mean(pivots, axis=0) if vp_seed is None else numpy.array(vp_seed)
 	context = (unit_vectors, pivots)
 	def jacobian(vp, unit_vectors, pivots):
 		reaches = [vp - pivot for pivot in pivots]
@@ -1764,7 +1943,11 @@ def get_best_intersection_by_angle5_segments(segments):
 		#grad_err = scipy.optimize.check_grad(objective, jacobian, seed, *context)
 		#print('grad_err', grad_err)
 		#result = scipy.optimize.leastsq(get_best_intersection_by_angle5_objective, seed, context, jacobian, col_deriv=True)
-		result = scipy.optimize.leastsq(get_best_intersection_by_angle5_objective, seed, context, jacobian)
+		hunts += 1
+		hunts_inner += 1
+		# FIXME
+		#result = scipy.optimize.leastsq(get_best_intersection_by_angle5_objective, seed, context, jacobian, ftol=tol)
+		result = scipy.optimize.leastsq(get_best_intersection_by_angle5_objective, seed, context, jacobian, ftol=1e-2, xtol=1e-5)
 		#print('leastsq result', result)
 		intersect = result[0]
 		residuals = get_best_intersection_by_angle5_objective(intersect, unit_vectors, pivots)
@@ -1783,14 +1966,16 @@ def get_error_by_angle5_segments(vp, segments):
 	pivots = [segment[0] for segment in segments]
 	residuals = get_best_intersection_by_angle5_objective(vp, unit_vectors, pivots)
 	cost = sum(residual**2 for residual in residuals)
+	#print('get_error_by_angle5_segments', cost, residuals)
 	return cost
 
 
 def get_vps(quads, precalculated=[None,None]):
-	return (
+	vps = (
 		get_best_intersection_by_angle3(numpy.array([vector for pair in ([quad[0:2], quad[2:4]] for quad in quads) for vector in pair]), precalculated[0]),
 		get_best_intersection_by_angle3(numpy.array([vector for pair in ([quad[1:3], [quad[3], quad[0]]] for quad in quads) for vector in pair]), precalculated[1]),
 	)
+	return vps
 
 
 if __name__ == "__main__":
