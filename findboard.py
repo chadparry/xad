@@ -422,7 +422,7 @@ def main():
 			quads = [grouper(quad, 2) for quad in X]
 			if self.vps is None:
 				return [float('inf') for quad in quads]
-			predicted = [(get_error_by_angle5_quad(self.vps, quad),) for quad in quads]
+			predicted = [(get_max_error_by_angle5_quad(self.vps, quad),) for quad in quads]
 			scores = sorted(s[0]**2 for s in predicted)
 			print('predict', len(X), scores[:3], scores[-3:])
 			#print('PREDICT', X, predicted)
@@ -518,7 +518,7 @@ def main():
 				min_samples=3,
 				residual_metric=lambda dy: numpy.sum(dy**2, axis=1),
 				# FIXME: Each segment has only 3 degrees of allowed error on average.
-				residual_threshold=(math.pi/30.)**4,
+				residual_threshold=(math.pi/120.)**2,
 				#residual_threshold=threshold,
 				max_trials=retries,
 			)
@@ -547,18 +547,21 @@ def main():
 		inlier_quads = [quad for (quad, mask) in zip(quads + quads_rot, regressor.inlier_mask_) if mask]
 		#print('vps', tuple(vp1), tuple(vp2))
 		#print('quads', inlier_quads)
-		cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
-		cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
-		#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-		#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-		cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
-		#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-		#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-		cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
-		for quad in inlier_quads:
-			for point in quad:
-				for vp in [vp1, vp2]:
-					cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
+		try:
+			cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
+			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+			#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+			#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+			#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
+			for quad in inlier_quads:
+				for point in quad:
+					for vp in [vp1, vp2]:
+						cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
+		except OverflowError:
+			pass
 
 		inlier_indices = [idx % len(quads) for (idx, mask) in enumerate(regressor.inlier_mask_) if mask]
 		# Discard quads that are no longer touching any other inliers
@@ -581,29 +584,32 @@ def main():
 		target_pts = [[dim for corner in quad for dim in corner] for quad in inlier_quads]
 		training_pts = [(0,) for i in range(len(inlier_quads))]
 		estimator.fit(target_pts, training_pts)
-		(vp1n, vp2n) = estimator.vps
-		(vp1, vp2) = get_vps(inlier_quads)
-		print('vps-numerical', tuple(vp1n), tuple(vp2n))
-		print('vps-analytical', tuple(vp1), tuple(vp2))
+		(vp1, vp2) = estimator.vps
+		(vp1a, vp2a) = get_vps(inlier_quads)
+		print('vps-numerical', tuple(vp1), tuple(vp2))
+		print('vps-analytical', tuple(vp1a), tuple(vp2a))
 
 
-		working = numpy.copy(color3)
-		left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
-		right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
-		#inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]
-		#print('quads', len(inlier_quads))
-		cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
-		cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
-		#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-		#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-		cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
-		#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-		#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-		cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
-		for quad in inlier_quads:
-			for point in quad:
-				for vp in [vp1, vp2]:
-					cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
+		try:
+			working = numpy.copy(color3)
+			left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
+			right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
+			#inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]
+			#print('quads', len(inlier_quads))
+			cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
+			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+			#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+			#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+			#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
+			for quad in inlier_quads:
+				for point in quad:
+					for vp in [vp1, vp2]:
+						cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
+		except OverflowError:
+			pass
 		cv2.imshow(WINNAME, working)
 		key = cv2.waitKey(0)
 	else:
@@ -961,10 +967,12 @@ def main():
 		print('projected quad', quadpts)
 		cv2.drawContours(bg, [quadpts], -1, (0, 0, 255), 1)
 
-	cv2.circle(bg, tuple(int(p) for p in vp1), 5, (0, 255, 0))
-	cv2.circle(bg, tuple(int(p) for p in vp2), 5, (0, 255, 0))
-	cv2.line(bg, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
-
+	try:
+		cv2.circle(bg, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+		cv2.circle(bg, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+		cv2.line(bg, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
+	except OverflowError:
+		pass
 	cv2.imshow(WINNAME, bg)
 	key = cv2.waitKey(1)
 
@@ -1565,27 +1573,27 @@ def get_best_intersection_by_angle3(segments, precalculated=None):
 	#seed[0] = seed[0] + 1000
 	context = (perpendicular_unit_vectors, pivots)
 	def objective(vp, unit_vectors, pivots):
-		print('--- OBJECTIVE')
-		print('vp', repr(vp))
-		print('perpendicular_unit_vectors', repr(perpendicular_unit_vectors))
-		print('pivots', repr(pivots))
+		#print('--- OBJECTIVE')
+		#print('vp', repr(vp))
+		#print('perpendicular_unit_vectors', repr(perpendicular_unit_vectors))
+		#print('pivots', repr(pivots))
 		# reaches ~ x - a
 		reaches = [vp - pivot for pivot in pivots]
 		reach_dists = (numpy.linalg.norm(reach) for reach in reaches)
 		unit_reaches = (reach/reach_dist if reach_dist != 0. else numpy.zeros(reach.shape)
 			for (reach, reach_dist) in zip(reaches, reach_dists))
 		unit_reaches = list(unit_reaches)
-		print('unit_reaches', repr(unit_reaches))
+		#print('unit_reaches', repr(unit_reaches))
 		projections = (numpy.dot(perpendicular_unit_vector, reach)
 			for (perpendicular_unit_vector, reach) in
 			#zip(perpendicular_unit_vectors, reaches))
 			zip(unit_vectors, reaches))
 		projections = list(projections)
-		print('projections', projections)
+		#print('projections', projections)
 		residuals = [math.asin(projection / numpy.linalg.norm(reach)) * 180. / math.pi
 			for (projection, reach) in zip(projections, reaches)]
-		print('residuals', residuals)
-		print('sum-squares', sum(residual**2 for residual in residuals))
+		#print('residuals', residuals)
+		#print('sum-squares', sum(residual**2 for residual in residuals))
 		return residuals
 	# FIXME
 	jacobian = None
@@ -1674,6 +1682,14 @@ def get_error_by_angle5_quad(vps, quad):
 	#print('get_error_by_angle5_quad', best)
 	return best
 
+def get_max_error_by_angle5_quad(vps, quad):
+	quads_rotated = [quad, quad[1:] + quad[:1]]
+	costs = (get_max_error_by_angle5_rotated_quad(vps, quad)
+		for quad in quads_rotated)
+	best = min(costs)
+	#print('get_max_error_by_angle5_quad', best)
+	return best
+
 hunts = 0
 hunts_inner = 0
 def get_best_intersection_by_angle5_quads_exponential(quads):
@@ -1732,6 +1748,29 @@ def get_all_orientations(quad):
 		),
 	]
 
+def add_best_quad_orientation(hypothesis, quad):
+	orientations = get_all_orientations(quad)
+	(vp1, vp2) = (hypothesis[0][1], hypothesis[1][1])
+	results = (get_best_segment_orientation((vp1, vp2), orientation) for orientation in orientations)
+	best = min(results, key=lambda e: e[0])
+
+	# When adding segments to the hypothesis, don't update the cost, since it is inaccurate.
+	# To get an accurate cost, the VP needs to be adjusted for the new segments.
+	return ((hypothesis[0][0], vp1, hypothesis[0][2] + best[1]), (hypothesis[1][0], vp2, hypothesis[1][2] + best[2]))
+
+def get_best_segment_orientation(vps, orientation):
+	(vp1, vp2) = vps
+	(vp1_attempts, vp2_attempts) = orientation
+
+	segment_costs1 = ((get_error_by_angle5_segments(vp1, numpy.array(attempt)), attempt) for attempt in vp1_attempts)
+	segment_costs2 = ((get_error_by_angle5_segments(vp2, numpy.array(attempt)), attempt) for attempt in vp2_attempts)
+
+	best1 = min(segment_costs1, key=lambda e: e[0])
+	best2 = min(segment_costs2, key=lambda e: e[0])
+
+	return (best1[0] + best2[0], best1[1], best2[1])
+
+
 def get_best_intersection_by_angle5_quads(quads, tol=math.pi/36000.):
 	global hunts
 	hunts = 0
@@ -1742,17 +1781,18 @@ def get_best_intersection_by_angle5_quads(quads, tol=math.pi/36000.):
 	is_first = True
 	for idx, quad in enumerate(quads):
 		print('hypotheses', len(hypotheses), '{}/{}'.format(idx, len(quads)))
-		if len(hypotheses) > 10 or True:
+		if len(hypotheses) > 10:
 			working = numpy.copy(color_global)
 			for hypothesis in hypotheses:
+				#print('hypothesis err', hypothesis[0][0], hypothesis[1][0])
 				working = numpy.copy(color_global)
 
 				(vp1, vp2) = (hypothesis[0][1], hypothesis[1][1])
-				if any(dim > 1e9 or dim < -1e9 for vp in (vp1, vp2) for dim in vp):
-					print('overflow', (vp1, vp2))
-					continue
 				for segment in hypothesis[0][2] + hypothesis[1][2]:
 					cv2.line(working, tuple(int(p) for p in segment[0]), tuple(int(p) for p in segment[1]), (0,255,0), 2)
+				if any(dim > 1e9 or dim < -1e9 for vp in (vp1, vp2) for dim in vp):
+					#print('overflow', (vp1, vp2))
+					continue
 
 				cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
 				cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
@@ -1765,7 +1805,6 @@ def get_best_intersection_by_angle5_quads(quads, tol=math.pi/36000.):
 					for point in segment:
 						cv2.line(working, tuple(int(dim) for dim in point), tuple(int(d) for d in vp2), (0,0,255), 1)
 
-				print('showing err', hypothesis[0][0], hypothesis[1][0])
 				cv2.imshow(WINNAME, working)
 				key = cv2.waitKey(1)
 
@@ -1774,44 +1813,51 @@ def get_best_intersection_by_angle5_quads(quads, tol=math.pi/36000.):
 			orientations = itertools.islice(orientations, 1)
 			# FIXME: Set vp seed in hypotheses to the average of all segments
 			is_first = False
-		#print('***comb', sum(len(orientation) for orientation in get_all_orientations(quad)), '*', len(hypotheses))
-		attempts = ((
-			# All the qualifying checks for VP1 will need to be
-			# combined pairwise with all the qualifying checks for VP2.
-			# VP1
-			# FIXME: Use a loop comprehension to get all the flips.
-			(
-				hypothesis[0][1],
-				[
-					# Unflipped for VP 1
-					hypothesis[0][2] + orientation[0][0],
-					# Flipped for VP 1
-					hypothesis[0][2] + orientation[0][1],
-				],
-			),
-			# VP2
-			(
-				hypothesis[1][1],
-				[
-					# Unflipped for VP 2
-					hypothesis[1][2] + orientation[1][0],
-					# Flipped for VP 2
-					hypothesis[1][2] + orientation[1][1],
-				],
-			),
-		) for (hypothesis, orientation) in itertools.product(hypotheses, orientations))
-		# Measure each attempt and filter out the ones that don't qualify.
-		hypotheses = [qualifier for attempt in attempts for qualifier in measure_attempt(
-			attempt[0][0], attempt[0][1], attempt[1][0], attempt[1][1], tol, quad)]
-		if not hypotheses:
-			# Nothing qualified
-			print('None qualified', len(quads), hunts)
-			return None
+		# FIXME: Instead of assuming 10 iters, reorder the quads so the later ones are known not to move the VP much
+		elif idx > 10 and idx < len(quads) - 1:
+			is_shortcut = True
+			# Deduce the best orientation and add segments to each hypothesis.
+			hypotheses = [add_best_quad_orientation(hypothesis, quad) for hypothesis in hypotheses]
+		else:
+			#print('***comb', sum(len(orientation) for orientation in get_all_orientations(quad)), '*', len(hypotheses))
+			attempts = ((
+				# All the qualifying checks for VP1 will need to be
+				# combined pairwise with all the qualifying checks for VP2.
+				# VP1
+				# FIXME: Use a loop comprehension to get all the flips.
+				(
+					hypothesis[0][1],
+					[
+						# Unflipped for VP 1
+						hypothesis[0][2] + orientation[0][0],
+						# Flipped for VP 1
+						hypothesis[0][2] + orientation[0][1],
+					],
+				),
+				# VP2
+				(
+					hypothesis[1][1],
+					[
+						# Unflipped for VP 2
+						hypothesis[1][2] + orientation[1][0],
+						# Flipped for VP 2
+						hypothesis[1][2] + orientation[1][1],
+					],
+				),
+			) for (hypothesis, orientation) in itertools.product(hypotheses, orientations))
+			# Measure each attempt and filter out the ones that don't qualify.
+			hypotheses = [qualifier for attempt in attempts for qualifier in measure_attempt(
+				attempt[0][0], attempt[0][1], attempt[1][0], attempt[1][1], tol, quad)]
+			if not hypotheses:
+				# Nothing qualified
+				print('None qualified', len(quads), hunts)
+				return None
+
 	best = min(hypotheses, key=lambda hypothesis: hypothesis[0][0] + hypothesis[1][0])
 
 	#print('costs', [hypothesis[0][0] + hypothesis[1][0] for hypothesis in hypotheses])
-	print('COST', best[0][0] + best[1][0])
-	print('HUNTS', len(quads), hunts)
+	#print('COST', best[0][0] + best[1][0])
+	#print('HUNTS', len(quads), hunts)
 	return (best[0][1], best[1][1])
 
 # FIXME
@@ -1833,7 +1879,7 @@ def measure_attempt(vp1, vp1_attempts, vp2, vp2_attempts, tol, last_quad):
 	#print('retry', segment_count, tol/10000, [measure_oriented_attempt(segments, tol/10000) for segments in vp1_attempts], '----', [measure_oriented_attempt(segments, tol/10000) for segments in vp2_attempts])
 	hypotheses = (qualifier
 		for qualifier in itertools.product(measurements1_filtered, measurements2_filtered)
-		if qualifier[0][0] + qualifier[1][0] < THRESHOLD*segment_count)
+		if qualifier[0][0] + qualifier[1][0] < THRESHOLD * segment_count)
 	hypotheses = list(hypotheses)
 	#print('hunts_inner', hunts_inner)
 	return hypotheses
@@ -1851,6 +1897,10 @@ def get_error_by_angle5_rotated_quad(vps, quad):
 	cost2 = get_error_by_angle5_vp(vps[1], quad[1:] + quad[:1])
 	return cost1 + cost2
 
+def get_max_error_by_angle5_rotated_quad(vps, quad):
+	cost1 = get_max_error_by_angle5_vp(vps[0], quad)
+	cost2 = get_max_error_by_angle5_vp(vps[1], quad[1:] + quad[:1])
+	return max(cost1, cost2)
 
 def get_best_intersection_by_angle5_rotated_quads(quads):
 	(cost1, vp1) = get_best_intersection_by_angle5_vp(quads)
@@ -1882,6 +1932,17 @@ def get_error_by_angle5_vp(vp, quad):
 	best = min(costs)
 	return best
 
+def get_max_error_by_angle5_vp(vp, quad):
+	quads = [quad]
+	orientations = itertools.product((False, True), repeat=len(quads))
+	segments_oriented = ([[[quad[1], quad[0]], [quad[2], quad[3]]] if flip else [[quad[0], quad[1]], [quad[3], quad[2]]]
+		for (quad, flip) in zip(quads, orientation)]
+		for orientation in orientations)
+	segments_flattened = ([segment for pair in segments for segment in pair] for segments in segments_oriented)
+	costs = (get_max_error_by_angle5_segments(vp, numpy.array(segments))
+		for segments in segments_flattened)
+	best = min(costs)
+	return best
 
 def get_best_intersection_by_angle5_objective(vp, unit_vectors, pivots):
 	#print('objective iter:', i[0])
@@ -1967,6 +2028,18 @@ def get_error_by_angle5_segments(vp, segments):
 	residuals = get_best_intersection_by_angle5_objective(vp, unit_vectors, pivots)
 	cost = sum(residual**2 for residual in residuals)
 	#print('get_error_by_angle5_segments', cost, residuals)
+	return cost
+
+def get_max_error_by_angle5_segments(vp, segments):
+	vectors = [end - begin for (begin, end) in segments]
+	vector_dists = (numpy.linalg.norm(vector) for vector in vectors)
+	vector_dists = list(vector_dists)
+	unit_vectors = [vector / vector_dist if vector_dist != 0. else numpy.zeros(dims)
+		for (vector, vector_dist) in zip(vectors, vector_dists)]
+	pivots = [segment[0] for segment in segments]
+	residuals = get_best_intersection_by_angle5_objective(vp, unit_vectors, pivots)
+	cost = max(residuals)
+	#print('get_max_error_by_angle5_segments', cost, residuals)
 	return cost
 
 
