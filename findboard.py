@@ -446,7 +446,7 @@ def main():
 			# First find the distance to the origin
 			(transformx, transformy) = (-(center[0] // 1 -
 				# Then decide whether to shift by one square, so the color doesn't change
-				(center[0]  % 2 // 1 + center[1] % 2 // 1) % 2),
+				(center[0] % 2 // 1 + center[1] % 2 // 1) % 2),
 				# The x coord already preserves the color, so the y coord doesn't need to shift.
 				-(center[1] // 1))
 			transformed = [(x + transformx, y + transformy) for (x, y) in quad]
@@ -492,7 +492,7 @@ def main():
 					print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
 			return rotated
 
-	if False:
+	if True:
 		if len(quads) < 3:
 			raise RuntimeError('Not enough quads found')
 
@@ -608,6 +608,7 @@ def main():
 			pass
 		cv2.imshow(WINNAME, working)
 		key = cv2.waitKey(0)
+		inlier_quads = numpy.array(inlier_quads)
 	else:
 
 		# FIXME
@@ -1048,7 +1049,7 @@ def main():
 		cv2.drawContours(bg, [quadpts], -1, (255, 0, 0), 2)
 
 		quadpts = numpy.array([project([pt[0], pt[1], 0., 1.]) for pt in pq]).astype('int')
-		print('projected quad', quadpts)
+		#print('projected quad', quadpts)
 		cv2.drawContours(bg, [quadpts], -1, (0, 0, 255), 1)
 
 	try:
@@ -1074,23 +1075,24 @@ def main():
 		#print('reverse projected quad', plot, get_perimeter(quadpts))
 		cv2.drawContours(bg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
 		cv2.drawContours(bg, [plot], -1, (255, 0, 0), 2)
+	projected_quads = list(rq)
 	cv2.imshow(WINNAME, bg)
 	key = cv2.waitKey(1)
 
 	# FIXME: Calculate the x and y deltas separately (ignoring lines' slant)
 	# once it is known that all quads are oriented consistently!
 
-	print('perimeters-first', [get_perimeter(quad) for quad in rq])
+	#print('perimeters-first', [get_perimeter(quad) for quad in rq])
 	perimeter = sum(get_perimeter(quad) for quad in rq)
 	avg = perimeter / float(len(rq))
-	print('avg-first', avg, len(rq))
+	#print('avg-first', avg, len(rq))
 	THRESHOLD = avg * 0.1
-	print('perimeter errors', [abs(avg - get_perimeter(quad)) for quad in rq])
+	#print('perimeter errors', [abs(avg - get_perimeter(quad)) for quad in rq])
 	rq_inliers = [quad for quad in rq if abs(avg - get_perimeter(quad)) < THRESHOLD]
-	print('perimeters-second', [get_perimeter(quad) for quad in rq_inliers])
+	#print('perimeters-second', [get_perimeter(quad) for quad in rq_inliers])
 	perimeter = sum(get_perimeter(quad) for quad in rq_inliers)
 	avg = perimeter / float(len(rq_inliers))
-	print('avg-second', avg, len(rq_inliers))
+	#print('avg-second', avg, len(rq_inliers))
 	square = avg / 4.
 
 	for quadpts in rq_inliers:
@@ -1099,12 +1101,6 @@ def main():
 	cv2.imshow(WINNAME, bg)
 	key = cv2.waitKey(1)
 
-
-	# This could be framed as a mixed-integer linear programming (MILP)
-	# problem, where each quad needs to be assigned to a integer grid
-	# position. However, MILP tools are heavy-weight. A less robust
-	# solution like this should always work adequately since there are
-	# very few outliers remaining.
 
 	# We need the best translation that puts the points closest to true square points.
 	# The translation in each dimension can be calculated independently.
@@ -1125,11 +1121,11 @@ def main():
 	biasy = biasangley / (math.pi*2)
 	translation = numpy.array([-biasx, -biasy, 0.])
 	shifted_points = ([x - biasx, y - biasy] for (x, y) in biased_points)
-	print('translation', translation)
+	#print('translation', translation)
 	# FIXME: Then remove outliers and recalculate.
 	# FIXME: The numbers before the round should be nearly whole numbers!
 	shifted_points = list(shifted_points)
-	print('before round', shifted_points)
+	#print('before round', shifted_points)
 	grid_positions = [[int(round(dim)) for dim in p] for p in shifted_points]
 	min_position = (min(p[0] for p in grid_positions), min(p[1] for p in grid_positions))
 	max_position = (max(p[0] for p in grid_positions), max(p[1] for p in grid_positions))
@@ -1142,28 +1138,105 @@ def main():
 	grid_corners_coord = (numpy.array([x, y, 1.]).reshape(3,1) for (x, y) in grid_corners)
 	zoom_in = numpy.array([[square, 0., 0.], [0., square, 0.], [0., 0., 1.]])
 	scaled = numpy.dot(r, zoom_in)
-	print('square', square)
+	#print('square', square)
 	offsetM = numpy.array([[1., 0., biasx], [0., 1., biasy], [0., 0., 1.]])
 	reverse_homography_denorm = default_mtx.dot(
 			numpy.delete(numpy.concatenate([scaled, tvec.reshape(3,1)], axis=1), 2, 1)
 		).dot(offsetM)
 	reverse_homography = reverse_homography_denorm / reverse_homography_denorm[2][2]
-	print('reverse', reverse_homography)
+	#print('reverse', reverse_homography)
 	projected_grid_corners_denorm = (reverse_homography.dot(coord) for coord in grid_corners_coord)
 	project_grid_points = (coord.reshape(3)[:2] / coord[2] for coord in projected_grid_corners_denorm)
+
+	all_quad_pts = []
+	for quad in inlier_quads:
+		quadpts = numpy.array([reverse_project([pt[0], pt[1], 1.]) for pt in quad])
+		all_quad_pts.extend(quadpts)
+	quad_pts_center = ((max(x for (x,y) in all_quad_pts)+min(x for (x,y) in all_quad_pts))/2.,
+		(max(y for (x,y) in all_quad_pts)+min(y for (x,y) in all_quad_pts))/2.)
+	quad_pts_coef = min(bg.shape[1] / (max(x for (x,y) in all_quad_pts) - min(x for (x,y) in all_quad_pts)),
+		bg.shape[0] / (max(y for (x,y) in all_quad_pts) - min(y for (x,y) in all_quad_pts)))
 
 
 	for quad in inlier_quads:
 		quadpts = numpy.array([reverse_project([pt[0], pt[1], 1.]) for pt in quad])
 		rq.append(quadpts)
-		plot = numpy.array([[x * 30000 + 2000, y * 30000 + 300] for (x,y) in quadpts]).astype('int')
+		plot = numpy.array([[(x - quad_pts_center[0]) * quad_pts_coef + bg.shape[1]/2., (y - quad_pts_center[1]) * quad_pts_coef + bg.shape[0]/2.] for (x,y) in quadpts]).astype('int')
 		#print('reverse projected quad', plot, get_perimeter(quadpts))
 		cv2.drawContours(bg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
 		cv2.drawContours(bg, [plot], -1, (255, 0, 0), 2)
 	for c in grid_corners:
 		cv2.circle(bg, (int(round(c[0] * square * 30000 + 2000)), int(round(c[1] * square * 30000 + 300))), 2, (0, 255, 0))
+	print(quad_pts_center, bg.shape)
 	cv2.imshow(WINNAME, bg)
+
+	#print(projected_quads)
+
+	# Find the average square size
+	perimeters = numpy.array([get_perimeter(quad) for quad in projected_quads])
+        outlier_perimeter_filter = identify_outliers(perimeters)
+        filtered_perimeters = perimeters[outlier_perimeter_filter]
+	avg_side = sum(filtered_perimeters) / float(len(filtered_perimeters) * 4)
+        filtered_quads = numpy.array(projected_quads)[outlier_perimeter_filter]
+        #print('AVG_SIDE', avg_side)
+
+        x_values = (x for quad in filtered_quads for (x, y) in quad)
+        y_values = (y for quad in filtered_quads for (x, y) in quad)
+        # Plot the points on a unit circle, where it wraps around again every avg_side.
+        x_radians = [x * 2*math.pi / avg_side for x in x_values]
+        y_radians = [y * 2*math.pi / avg_side for y in y_values]
+        # Now average all the vectors on the unit circle to find an average that isn't fooled by the wrapping.
+	offset_angle_x = math.atan2(
+		sum(math.sin(angle) for angle in x_radians),
+		sum(math.cos(angle) for angle in x_radians))
+	offset_angle_y = math.atan2(
+		sum(math.sin(angle) for angle in y_radians),
+		sum(math.cos(angle) for angle in y_radians))
+	# Use that to get the average offset
+        avg_x_offset = offset_angle_x * avg_side / (2*math.pi)
+        avg_y_offset = offset_angle_y * avg_side / (2*math.pi)
+	# Shift all the quads so they should now lie on an integral grid
+        offset_quads = [[((x - avg_x_offset) / avg_side, (y - avg_y_offset) / avg_side) for (x, y) in quad] for quad in filtered_quads]
+	#print("OFFSET", offset_quads)
+        # Snap all points to the nearest grid position
+        snapped_quads = [[(round(x), round(y)) for (x, y) in quad] for quad in offset_quads]
+        # Match the snapped points with their original image locations
+        unprojected_quads = numpy.array(inlier_quads)[outlier_perimeter_filter]
+	key = cv2.waitKey(1)
+
+	unprojected_pts = unprojected_quads.reshape((len(unprojected_quads)*4, 2))
+	snapped_pts = numpy.array(snapped_quads).reshape((len(snapped_quads)*4, 2))
+
+	snapped_pts_coord = numpy.array([[x, y, 1.] for (x, y) in snapped_pts])
+
+	(h, w, _) = color3.shape
+	f = max(h, w)
+	fx = fy = f
+	default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
+	s, rvecs, tvecs, inliers = cv2.solvePnPRansac(snapped_pts_coord, unprojected_pts, default_mtx, dist)
+
+	min_snapped_x = min(x for (x, y) in snapped_pts) - 7
+	min_snapped_y = min(y for (x, y) in snapped_pts) - 7
+	max_snapped_x = max(x for (x, y) in snapped_pts) + 7
+	max_snapped_y = max(y for (x, y) in snapped_pts) + 7
+	grid_corners = itertools.product(
+		range(int(min_snapped_x), int(max_snapped_x) + 1),
+		range(int(min_snapped_y), int(max_snapped_y) + 1))
+	grid_corners_coord = numpy.array([[float(x), float(y), 1.] for (x, y) in grid_corners])
+	project_grid_points, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
+
+	pimg = numpy.copy(color3)
+	for quad in inlier_quads:
+		cv2.drawContours(pimg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
+	for c in project_grid_points:
+		cv2.circle(pimg, (int(round(c[0][0])), int(round(c[0][1]))), 2, (0, 255, 0))
+	cv2.imshow(WINNAME, pimg)
 	key = cv2.waitKey(0)
+
+	raise RuntimeError('Aborting')
+
+
+
 
 
 	pimg = numpy.copy(color3)
@@ -2127,12 +2200,72 @@ def get_max_error_by_angle5_segments(vp, segments):
 	return cost
 
 
+def rotate_quad(quad, debug=False):
+	"""
+	Transform the points by an integral distance and
+	reorder the points so the upper-leftmost is first
+	"""
+	#print('quad', quad)
+	#center = shapely.geometry.polygon.Polygon(quad).representative_point()
+	center = get_centroid(quad)
+
+	angles = (math.atan2(y - center[1], x - center[0]) for (x, y) in quad)
+	if debug or True:
+		angles = list(angles)
+	# It is assumed the points are already listed counter-clockwise and their sequence should be preserved.
+	# If the homography inverted the orientation, then the error measurement will be high
+	# and the homography will need to be discarded.
+	# Each angle should be 90 degrees greater than the previous angle. All the angles will
+	# have the same bias (angular distance from the desired orientation) if the quad is a perfect square.
+	bias_angles = (angle + i * (math.pi/2.) for (i, angle) in enumerate(angles))
+	if debug or True:
+		bias_angles = list(bias_angles)
+	average_bias_angle = math.atan2(
+		sum(math.sin(angle) for angle in bias_angles),
+		sum(math.cos(angle) for angle in bias_angles))
+	# Reorder the points to minimize the bias.
+	rotation = int(average_bias_angle / (math.pi/2.) + 2)
+	#print('rotation', rotation)
+	if rotation > 0:
+		rotated = quad[rotation:] + quad[:rotation]
+	else:
+		rotated = quad
+
+	if debug:
+		print('--------------------------------')
+		print('center', center)
+		#print('shifted', (shiftedx, shiftedy))
+		#print('transform', (transformx, transformy))
+		#print('new center', (center[0] + transformx, center[1] + transformy))
+		print('offsets', [(x - center[0], y - center[1]) for (x, y) in quad])
+		print('raw angles', [a / (math.pi/2.) for a in angles])
+		print('bias angles', [a / (math.pi/2.) for a in bias_angles])
+		print('average bias angle', average_bias_angle / (math.pi/2.))
+		print('rotation', rotation)
+		#print('rotated from', transformed)
+		print('rotated from', quad)
+		print('rotated to', rotated)
+		if center[0] + transformx >= 2:
+			print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+	return rotated
+
+
 def get_vps(quads, precalculated=[None,None]):
 	vps = (
 		get_best_intersection_by_angle3(numpy.array([vector for pair in ([quad[0:2], quad[2:4]] for quad in quads) for vector in pair]), precalculated[0]),
 		get_best_intersection_by_angle3(numpy.array([vector for pair in ([quad[1:3], [quad[3], quad[0]]] for quad in quads) for vector in pair]), precalculated[1]),
 	)
 	return vps
+
+
+# https://stackoverflow.com/a/45399188
+#def reject_outliers_2(data, m = 2.):
+def identify_outliers(data, m = 2.):
+    d = numpy.abs(data - numpy.median(data))
+    mdev = numpy.median(d)
+    s = d/(mdev if mdev else 1.)
+    #return data[s<m]
+    return s<m
 
 
 if __name__ == "__main__":
