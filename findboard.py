@@ -1198,7 +1198,7 @@ def main():
 	transformed_quads = [[(x / avg_x_side - avg_x_offset, y / avg_y_side - avg_y_offset) for (x, y) in quad] for quad in filtered_quads]
 	#print("TRANSFORMED", transformed_quads)
 	# Snap all points to the nearest grid position
-	snapped_quads = [[(round(x), round(y)) for (x, y) in quad] for quad in transformed_quads]
+	snapped_quads = [[(int(round(x)), int(round(y))) for (x, y) in quad] for quad in transformed_quads]
 	all_snapped_pts = [p for quad in snapped_quads for p in quad]
 	all_transformed_pts = (p for quad in transformed_quads for p in quad)
 	snap_distance = (numpy.linalg.norm([sp[0] - tp[0], sp[1] - tp[1]]) for (sp, tp) in zip(all_snapped_pts, all_transformed_pts))
@@ -1223,12 +1223,17 @@ def main():
 	min_snapped_y = min(y for (x, y) in snapped_pts) - 7
 	max_snapped_x = max(x for (x, y) in snapped_pts) + 7
 	max_snapped_y = max(y for (x, y) in snapped_pts) + 7
-	grid_corners = list(itertools.product(
-		range(int(min_snapped_x), int(max_snapped_x) + 1),
-		range(int(min_snapped_y), int(max_snapped_y) + 1)))
-	grid_corners_coord = numpy.array([[float(x), float(y), 1.] for (x, y) in grid_corners])
-	project_grid_points, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
+	#grid_corners = list(itertools.product(
+	#	range(int(min_snapped_x), int(max_snapped_x) + 1),
+	#	range(int(min_snapped_y), int(max_snapped_y) + 1)))
+	grid_corners = [[(x, y)
+		for x in range(min_snapped_x, max_snapped_x + 1)]
+		for y in range(min_snapped_y, max_snapped_y + 1)]
+	grid_corners_coord = numpy.array([[float(x), float(y), 1.] for row_corners in grid_corners for (x, y) in row_corners])
+	project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
 	#print('GRID', min_snapped_x, max_snapped_x, min_snapped_y, max_snapped_y)
+	project_grid_points_flat = project_grid_points_result.reshape(project_grid_points_result.shape[0], 2)
+	project_grid_points = project_grid_points_result.reshape(max_snapped_y + 1 - min_snapped_y, max_snapped_x + 1 - min_snapped_x, 2)
 
 
 	bg = numpy.copy(color3)
@@ -1257,10 +1262,11 @@ def main():
 		#cv2.circle(bg, tuple(pt), random.randint(1, 7), (0, 255, 255))
 		cv2.circle(bg, tuple(pt), 2, (0, 255, 255))
 
-	for c in grid_corners:
-		plot = (int((c[0] - quad_pts_center[0]) * quad_pts_coef + bg.shape[1]/2.), int((c[1] - quad_pts_center[1]) * quad_pts_coef + bg.shape[0]/2.))
-		if plot[0] >= 0 and plot[1] >= 0:
-			cv2.circle(bg, plot, 2, (0, 255, 0))
+	for row in grid_corners:
+		for c in row:
+			plot = (int((c[0] - quad_pts_center[0]) * quad_pts_coef + bg.shape[1]/2.), int((c[1] - quad_pts_center[1]) * quad_pts_coef + bg.shape[0]/2.))
+			if plot[0] >= 0 and plot[1] >= 0:
+				cv2.circle(bg, plot, 2, (0, 255, 0))
 	for quadpts in snapped_quads:
 		plot = numpy.array([[(x - quad_pts_center[0]) * quad_pts_coef + bg.shape[1]/2., (y - quad_pts_center[1]) * quad_pts_coef + bg.shape[0]/2.] for (x,y) in quadpts]).astype('int')
 		cv2.drawContours(bg, [plot], -1, (255, 0, 0), 1)
@@ -1275,8 +1281,8 @@ def main():
 		cv2.drawContours(pimg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
 	snapped_pts_coord = numpy.array([[x, y, 1.] for (x, y) in snapped_pts])
 	project_snapped_points, j = cv2.projectPoints(snapped_pts_coord, rvecs, tvecs, default_mtx, dist)
-	for cp in project_grid_points:
-		cv2.circle(pimg, (int(round(cp[0][0])), int(round(cp[0][1]))), 1, (0, 255, 0))
+	for cp in project_grid_points_flat:
+		cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 1, (0, 255, 0))
 	inlier_set = frozenset(idx[0] for idx in inliers)
 	for (idx, (cu, cp)) in enumerate(zip(unprojected_pts, project_snapped_points)):
 		#if idx not in inlier_set:
@@ -1289,14 +1295,31 @@ def main():
 	key = cv2.waitKey(1)
 
 
-	criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-	result = cv2.cornerSubPix(img1, numpy.float32(project_grid_points), (4,4), (-1,-1), criteria)
+	criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.1)
+	#print('points', project_grid_points)
+	corners_flat = cv2.cornerSubPix(img1, numpy.float32(project_grid_points_flat), (5,5), (-1,-1), criteria)
+	corners = corners_flat.reshape(*project_grid_points.shape)
+	# FIXME: Calculate the scores only for the relevant grid points
+	# FIXME: Also make sure the calculation has subpixel accuracy
+	dst = cv2.cornerHarris(img1,2,3,0.04)
 	pimg = numpy.copy(color3)
-	for cp in project_grid_points:
-		cv2.circle(pimg, (int(round(cp[0][0])), int(round(cp[0][1]))), 1, (0, 255, 0))
-	for cp in result:
-		cv2.circle(pimg, (int(round(cp[0][0])), int(round(cp[0][1]))), 2, (0, 255, 255))
+	scores = []
+	for (cp, gp) in zip(corners_flat, project_grid_points_flat):
+		(x, y) = int(round(cp[0])), int(round(cp[1]))
+		if x < 0 or y < 0 or x >= dst.shape[1] or y >= dst.shape[0]:
+			continue
+		score = dst.item(y, x)
+		scores.append(score)
+		# FIXME: Instead of filtering, just add up (logarithm of?) the scores for every possible board location and pick the max!
+		if score > 0:
+			cv2.circle(pimg, (int(round(gp[0])), int(round(gp[1]))), 1, (0, 255, 0))
+			cv2.circle(pimg, (x, y), 2, (0, 255, 255))
+	#print('scores', sorted(scores))
+	#cv2.imshow(WINNAME, (dst+0.0001)*5000)
+	#cv2.imshow(WINNAME, abs(dst)*50)
+	#cv2.imshow(WINNAME, abs(dst)*5000000)
 	cv2.imshow(WINNAME, pimg)
+	#print('corners', corners)
 	key = cv2.waitKey(0)
 
 
