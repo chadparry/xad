@@ -1299,28 +1299,45 @@ def main():
 	#print('points', project_grid_points)
 	corners_flat = cv2.cornerSubPix(img1, numpy.float32(project_grid_points_flat), (5,5), (-1,-1), criteria)
 	corners = corners_flat.reshape(*project_grid_points.shape)
-	# FIXME: Calculate the scores only for the relevant grid points
-	# FIXME: Also make sure the calculation has subpixel accuracy
-	dst = cv2.cornerHarris(img1,2,3,0.04)
+	# TODO: Calculate the scores only for the relevant grid points
+	# TODO: Also make sure the calculation has subpixel accuracy
+	corner_likelihood = cv2.cornerHarris(img1,2,3,0.04)
+	default_corner_likelihood = 0
+
+	corner_scores = [[corner_likelihood.item(y, x)**2
+		if x >= 0 and y >= 0 and x < corner_likelihood.shape[1] and y < corner_likelihood.shape[0]
+		else default_corner_likelihood
+			for (x, y) in ((int(round(cp[0])), int(round(cp[1]))) for cp in corners_row)]
+			for corners_row in corners]
+	board_scores = rolling_sum(corner_scores)
+	board_max_flat_idx = board_scores.argmax()
+	board_max_idx = numpy.unravel_index(board_max_flat_idx, board_scores.shape[:2])
+	best_corners = corners[board_max_idx[0]:board_max_idx[0]+9, board_max_idx[1]:board_max_idx[1]+9]
+
+	#pimg = numpy.copy(color3)
+	#for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
+	#	cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 2, (0, 255, 0))
+	#for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
+	#	cv2.circle(corner_likelihood, (int(round(bp[0])), int(round(bp[1]))), 8, 255)
+	#cv2.imshow(WINNAME, pimg)
+	#key = cv2.waitKey(1)
+
+
+	best_corners_flat = best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2])
+	grid_corners_coord = numpy.array([[float(x), float(y), 1.] for y in xrange(9) for x in xrange(9)])
+	s, rvecs, tvecs = cv2.solvePnP(grid_corners_coord, best_corners_flat, default_mtx, dist, rvecs, tvecs, useExtrinsicGuess=True)
+	project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
+	project_grid_points = project_grid_points_result.reshape(9, 9, 2)
 	pimg = numpy.copy(color3)
-	scores = []
-	for (cp, gp) in zip(corners_flat, project_grid_points_flat):
-		(x, y) = int(round(cp[0])), int(round(cp[1]))
-		if x < 0 or y < 0 or x >= dst.shape[1] or y >= dst.shape[0]:
-			continue
-		score = dst.item(y, x)
-		scores.append(score)
-		# FIXME: Instead of filtering, just add up (logarithm of?) the scores for every possible board location and pick the max!
-		if score > 0:
-			cv2.circle(pimg, (int(round(gp[0])), int(round(gp[1]))), 1, (0, 255, 0))
-			cv2.circle(pimg, (x, y), 2, (0, 255, 255))
-	#print('scores', sorted(scores))
-	#cv2.imshow(WINNAME, (dst+0.0001)*5000)
-	#cv2.imshow(WINNAME, abs(dst)*50)
-	#cv2.imshow(WINNAME, abs(dst)*5000000)
+	for bp in project_grid_points.reshape(project_grid_points.shape[0] * project_grid_points.shape[1], project_grid_points.shape[2]):
+		cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 5, (0, 255, 0))
 	cv2.imshow(WINNAME, pimg)
-	#print('corners', corners)
 	key = cv2.waitKey(0)
+
+
+
+def rolling_sum(a, n=9) :
+	return scipy.signal.convolve2d(numpy.array(a), numpy.ones((n, n), dtype=int), 'valid')
 
 
 def euclidean_distance (p1, p2):
