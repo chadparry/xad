@@ -39,7 +39,8 @@ def main():
 	if not webcam.isOpened():
 		raise RuntimeError('Failed to open camera')
 
-	[webcam.read() for i in range(10)]
+	#[webcam.read() for i in range(10)]
+	[webcam.read() for i in range(500)]
 	#[webcam.read() for i in range(1500)]
 
 	if True:
@@ -492,7 +493,7 @@ def main():
 					print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
 			return rotated
 
-	if False:
+	if True:
 		if len(quads) < 3:
 			raise RuntimeError('Not enough quads found')
 
@@ -607,7 +608,7 @@ def main():
 		except OverflowError:
 			pass
 		cv2.imshow(WINNAME, working)
-		key = cv2.waitKey(0)
+		key = cv2.waitKey(1)
 		inlier_quads = numpy.array(inlier_quads)
 	else:
 
@@ -1325,12 +1326,31 @@ def main():
 
 	best_corners_flat = best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2])
 	grid_corners_coord = numpy.array([[float(x), float(y), 1.] for y in xrange(9) for x in xrange(9)])
+	# FIXME: Detect the correct color orientation!
 	s, rvecs, tvecs = cv2.solvePnP(grid_corners_coord, best_corners_flat, default_mtx, dist, rvecs, tvecs, useExtrinsicGuess=True)
 	project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
 	project_grid_points = project_grid_points_result.reshape(9, 9, 2)
 	pimg = numpy.copy(color3)
-	for bp in project_grid_points.reshape(project_grid_points.shape[0] * project_grid_points.shape[1], project_grid_points.shape[2]):
-		cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 5, (0, 255, 0))
+	square = numpy.int32([[
+		project_grid_points[0][0],
+		project_grid_points[0][-1],
+		project_grid_points[-1][-1],
+		project_grid_points[-1][0],
+	]])
+	cv2.fillPoly(pimg, square, (255, 255, 255))
+	for y in xrange(8):
+		for x in xrange(8):
+			if (x + y) % 2:
+				continue
+			square = numpy.int32([[
+				project_grid_points[y][x],
+				project_grid_points[y][x+1],
+				project_grid_points[y+1][x+1],
+				project_grid_points[y+1][x],
+			]])
+			cv2.fillPoly(pimg, square, (0, 0, 0))
+	#for bp in project_grid_points.reshape(project_grid_points.shape[0] * project_grid_points.shape[1], project_grid_points.shape[2]):
+	#	cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 5, (0, 255, 0))
 	cv2.imshow(WINNAME, pimg)
 	key = cv2.waitKey(0)
 
