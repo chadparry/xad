@@ -203,27 +203,25 @@ def main():
 	dist = numpy.linalg.norm([2, 2])
 	pairs = tree.query_pairs(dist)
 	#print('pairs', pairs)
-	connected_indices = collections.defaultdict(collections.Counter)
+	connected_indices = collections.defaultdict(lambda: collections.defaultdict(list))
 	for pair in pairs:
-		connected = set(point_idx // 4 for point_idx in pair)
-		for (left, right) in itertools.product(connected, repeat=2):
-			if left != right:
-				#print(left, '=>', right)
-				connected_indices[left][right] += 1
+		if pair[0]//4 == pair[1]//4:
+			continue
+		for (left, right) in itertools.permutations(pair):
+			#print(left, '=>', right)
+			connected_indices[left//4][right//4].append(pair)
 	#print('CONN_IND', len(connected_indices), connected_indices)
-	#uniques = {left_idx: {right_idx: right_count for (right_idx, right_count) in right_counts.iteritems()
-	#		# If two quads overlap on 3 or more sides, then discard the one that was found
-	#		# first, which is the one found in the noiser image with the smaller block size.
-	#		if right_idx < left_idx or right_count < 3}
-	#	for (left_idx, right_counts) in connected_indices.iteritems()}
 	uniques = {left_idx:
 		[right_idx
-			for (right_idx, right_count) in right_counts.iteritems()
-			if right_count < 3]
+			for (right_idx, connected_pairs) in right_counts.iteritems()
+			#if len(connected_pairs) == 2
+			# If there is one overlapping corner, then check that some edge is collinear
+			if all(is_complementary_corner(pair[0], pair[1], good, color2) for pair in connected_pairs)
+			]
 		for (left_idx, right_counts) in connected_indices.iteritems()
-		# If two quads overlap on 3 or more sides, then discard the one that was found
+		# If two quads overlap on 3 or more corners, then discard the one that was found
 		# first, which is the one found in the noiser image with the smaller block size.
-		if all(right_idx < left_idx or right_count < 3 for (right_idx, right_count) in right_counts.iteritems())}
+		if all(right_idx < left_idx or len(connected_pairs) < 3 for (right_idx, connected_pairs) in right_counts.iteritems())}
 	#print('UNIQUES', len(uniques), uniques)
 	connected_map = [left_idx for (left_idx, right_counts) in uniques.iteritems() if right_counts]
 	#print('CONN_MAP', len(connected_map), connected_map)
@@ -232,9 +230,9 @@ def main():
 	#print('quads', len(quads))
 
 	contlines = numpy.zeros((color2.shape[0], color2.shape[1], 3), numpy.uint8)
-	for contour in good:
-		cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
-		for (x,y) in contour]]), -1, (0, 0, 255), 1)
+	#for contour in good:
+	#	cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
+	#	for (x,y) in contour]]), -1, (0, 0, 255), 1)
 	for contour in quads:
 		cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
 		for (x,y) in contour]]), -1, (255, 0, 0), 1)
@@ -1292,8 +1290,8 @@ def main():
 		cv2.line(pimg, (int(round(cu[0])), int(round(cu[1]))), (int(round(cp[0][0])), int(round(cp[0][1]))), (255,0,0), 1)
 		cv2.circle(pimg, (int(round(cu[0])), int(round(cu[1]))), 4, (0, 255, 255))
 		cv2.circle(pimg, (int(round(cp[0][0])), int(round(cp[0][1]))), 2, (0, 255, 0))
-	cv2.imshow(WINNAME, pimg)
-	key = cv2.waitKey(1)
+	#cv2.imshow(WINNAME, pimg)
+	#key = cv2.waitKey(0)
 
 
 	criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.1)
@@ -1354,6 +1352,48 @@ def main():
 	cv2.imshow(WINNAME, pimg)
 	key = cv2.waitKey(0)
 
+
+
+def is_complementary_corner(left_idx, right_idx, quads, color2):
+	"""Tests whether the segments emanating from two quads' shared corner are collinear"""
+	left_quad = quads[left_idx//4]
+	right_quad = quads[right_idx//4]
+	left_corner_idx = left_idx % 4
+	right_corner_idx = right_idx % 4
+	left_segments = [[left_quad[left_corner_idx], left_quad[(left_corner_idx + 1) % 4]],
+		[left_quad[left_corner_idx], left_quad[(left_corner_idx + 3) % 4]]]
+	right_segments = [[right_quad[right_corner_idx], right_quad[(right_corner_idx + 1) % 4]],
+		[right_quad[right_corner_idx], right_quad[(right_corner_idx + 3) % 4]]]
+	scores = [sorted([get_collinear_score(left_segments[0], right_segments[0]), get_collinear_score(left_segments[1], right_segments[1])]),
+		sorted([get_collinear_score(left_segments[0], right_segments[1]), get_collinear_score(left_segments[1], right_segments[0])])]
+	# We want quads where the scores are [-1, -1] or else [-1, 1]
+	# We make twisted scores so that the best scores are [-1, -1]
+	twisted_scores = [[pair[0], -abs(pair[1])] for pair in scores]
+	combined_score = min(sum((s + 1)**2 for s in pair) for pair in twisted_scores)
+	success = combined_score < 0.002
+	#if success:
+	#	print('Collinear', scores)
+	#else:
+	#	print('NOT', scores)
+
+	#contlines = numpy.zeros((color2.shape[0], color2.shape[1], 3), numpy.uint8)
+	#for contour in [left_quad, right_quad]:
+	#	cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, contlines.shape[1]-1)), int(numpy.clip(y, 0, contlines.shape[0]-1)))
+	#	for (x,y) in contour]]), -1, (255, 0, 0), 1)
+	#cv2.imshow(WINNAME, contlines)
+	#key = cv2.waitKey(0)
+
+	return success
+
+
+def get_collinear_score(left_segment, right_segment):
+	"""Test collinearity. Success results in 1 or -1 return value"""
+	left_vector = left_segment[1] - left_segment[0]
+	right_vector = right_segment[1] - right_segment[0]
+	dot = numpy.dot(left_vector, right_vector)
+	# The best normalized score is -1.
+	normalized = dot / (numpy.linalg.norm(left_vector) * numpy.linalg.norm(right_vector))
+	return normalized
 
 
 def rolling_sum(a, n=9) :
@@ -1761,7 +1801,7 @@ def get_best_intersection_by_angle5_quads(quads, tol=math.pi/36000.):
 	hypotheses = [((0, (0, 0), []), (0, (0, 0), []))]
 	is_first = True
 	for idx, quad in enumerate(quads):
-		print('hypotheses', len(hypotheses), '{}/{}'.format(idx, len(quads)))
+		#print('hypotheses', len(hypotheses), '{}/{}'.format(idx, len(quads)))
 		if len(hypotheses) > 10:
 			working = numpy.copy(color_global)
 			for hypothesis in hypotheses:
