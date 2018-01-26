@@ -77,7 +77,8 @@ def main():
 	#key = cv2.waitKey(0)
 
 	#ret,thresh = cv2.threshold(img1,127,255,0)
-	contours = []
+	dark_contours = []
+	light_contours = []
 	# Start off with the largest reasonable block size, which should be near the smallest
 	# possible dimension that four chessboard squares could have. That way, at the edge
 	# of the board, the block size could still encompass the two nearest ranks or files.
@@ -90,27 +91,33 @@ def main():
 		#cv2.imshow(WINNAME, thresh)
 		#key = cv2.waitKey(0)
 
-		# For finding dark squares
 		# FIXME: Start with a 1-pixel dilation and increase to 7, like cv::findChessboardCorners.
 		kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(4,4))
+
+		# For finding dark squares
 		dilated = cv2.dilate(thresh, kernel)
+
 		# For finding light squares
 		eroded = cv2.erode(thresh, kernel)
+
+		# Draw a rectangle around the outer edge,
+		# so that clipped corners have a chance of being recognized.
+		cv2.rectangle(dilated, (0, 0), (dilated.shape[1]-1, dilated.shape[0]-1), 255)
+		cv2.rectangle(eroded, (0, 0), (eroded.shape[1]-1, eroded.shape[0]-1), 0)
+
 		#cv2.imshow(WINNAME, dilated)
 		#key = cv2.waitKey(0)
 		#cv2.imshow(WINNAME, eroded)
 		#key = cv2.waitKey(0)
-
-		# FIXME: findChessboardCorners draws a rectangle around the outer edge,
-		# so that clipped corners have a chance of being recognized.
 
 		im2, contoursd, hierarchy = cv2.findContours(dilated,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
 		ime2, contourse, hierarchy = cv2.findContours(eroded,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
 
 		contoursd_rev = [numpy.array(list(reversed(contour))) for contour in contoursd]
 
-		contours.extend(contoursd_rev)
-		contours.extend(contourse)
+		dark_contours.extend(contoursd_rev)
+		light_contours.extend(contourse)
+	contours = dark_contours + light_contours
 	#print('contours', len(contours))
 
 	approxes = []
