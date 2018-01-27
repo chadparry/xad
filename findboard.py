@@ -91,123 +91,49 @@ def main():
 		#cv2.imshow(WINNAME, thresh)
 		#key = cv2.waitKey(0)
 
-		# FIXME: Start with a 1-pixel dilation and increase to 7, like cv::findChessboardCorners.
-		kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(4,4))
+		for dilation in [1, 2, 4]:
 
-		# For finding dark squares
-		dilated = cv2.dilate(thresh, kernel)
+			kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(dilation, dilation))
 
-		# For finding light squares
-		eroded = cv2.erode(thresh, kernel)
+			# For finding dark squares
+			dilated = cv2.dilate(thresh, kernel)
 
-		# Draw a rectangle around the outer edge,
-		# so that clipped corners have a chance of being recognized.
-		cv2.rectangle(dilated, (0, 0), (dilated.shape[1]-1, dilated.shape[0]-1), 255)
-		cv2.rectangle(eroded, (0, 0), (eroded.shape[1]-1, eroded.shape[0]-1), 0)
+			# For finding light squares
+			eroded = cv2.erode(thresh, kernel)
 
-		#cv2.imshow(WINNAME, dilated)
-		#key = cv2.waitKey(0)
-		#cv2.imshow(WINNAME, eroded)
-		#key = cv2.waitKey(0)
+			# Draw a rectangle around the outer edge,
+			# so that clipped corners have a chance of being recognized.
+			cv2.rectangle(dilated, (0, 0), (dilated.shape[1]-1, dilated.shape[0]-1), 255)
+			cv2.rectangle(eroded, (0, 0), (eroded.shape[1]-1, eroded.shape[0]-1), 0)
 
-		im2, contoursd, hierarchy = cv2.findContours(dilated,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
-		ime2, contourse, hierarchy = cv2.findContours(eroded,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+			#cv2.imshow(WINNAME, dilated)
+			#key = cv2.waitKey(0)
+			#cv2.imshow(WINNAME, eroded)
+			#key = cv2.waitKey(0)
 
-		contoursd_rev = [numpy.array(list(reversed(contour))) for contour in contoursd]
+			im2, contoursd, hierarchy = cv2.findContours(dilated,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+			ime2, contourse, hierarchy = cv2.findContours(eroded,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
 
-		dark_contours.extend(contoursd_rev)
-		light_contours.extend(contourse)
+			contoursd_rev = [numpy.array(list(reversed(contour))) for contour in contoursd]
+
+			filtered_contoursd = filter_quads(contoursd_rev)
+			filtered_contourse = filter_quads(contourse)
+
+			dilated_contoursd = dilate_contours(filtered_contoursd, kernel)
+			dilated_contourse = dilate_contours(filtered_contourse, kernel)
+
+			dark_contours.extend(dilated_contoursd)
+			light_contours.extend(dilated_contourse)
+
+
+
 	contours = dark_contours + light_contours
+	good = contours
 	#print('contours', len(contours))
-
-	approxes = []
-	good = []
-	goodd = []
-	goode = []
-	oldgood = []
-	oldgoodd = []
-	oldgoode = []
-	kernel_cloud = [(kpx - kernel.shape[0]/2, kpy - kernel.shape[1]/2)	
-		for kpx in range(kernel.shape[0]) for kpy in range(kernel.shape[1])
-		if kernel[(kpx,kpy)]]
-	kernel_hull = [p[0] for p in cv2.convexHull(numpy.array(kernel_cloud))]
-
-	#print('kernel_cloud', kernel_cloud)
-	for (idx, contour) in enumerate(contours):
-		#	contour = numpy.array([[p] for p in contour])
-		if len(contour) < 4:
-			continue
-		perimeter = cv2.arcLength(contour, closed=True)
-		# FIXME: The findChessboardCorners utility tries multiple thresholds between 1 and 7,
-		# and for each one it does two passes.
-		if len(contour) > 4:
-			approx = cv2.approxPolyDP(contour, perimeter/20, True)
-		elif len(contour) == 4:
-			approx = contour
-		else:
-			continue
-		approx = numpy.squeeze(approx)
-
-		#if len(approx) > 4:
-		#	approx = cv2.approxPolyDP(approx, 5, True)
-		if len(approx) != 4:
-			continue
-			pass
-		# Any negative-oriented (clockwise) contours are rejected.
-		if numpy.cross(approx[1] - approx[0], approx[2] - approx[1]) >= 0:
-			continue
-		if not cv2.isContourConvex(approx):
-			continue
-		#if cv2.arcLength(approx,True) < 50:
-		#	continue
-		if cv2.contourArea(approx) < 40:
-			continue
-
-		# Remove bookshelf contours
-		#if approx[0][1] < 300:
-		#	continue
-
-		approxes.append(approx)
-
-	for approx in approxes:
-		dilated_segments = []
-		# FIXME: This loop is even slower than running drawContours and findContours below
-		for segment_idx in range(len(approx)):
-			#print('-----------------')
-			#print('kernel', kernel_hull)
-			segment = numpy.array([approx[segment_idx], approx[(segment_idx + 1) % len(approx)]])
-			segment_vector = segment[1] - segment[0]
-			segment_unit = segment_vector / numpy.linalg.norm(segment_vector)
-
-			#print('segment', segment_vector)
-			rejection_vectors = (numpy.dot(kp, segment_unit) * segment_unit - kp
-				for kp in kernel_hull)
-			#print('segment', segment_vector, segment_unit)
-			#print('rejections', zip(rejection_vectors, kernel_hull))
-			offset = max(rejection_vectors, key=lambda rv: numpy.cross(segment_vector, rv))
-			#print('offset', offset)
-			dilated_segment = [p + offset for p in segment]
-			#print('dilated_segment', dilated_segment)
-			dilated_segments.append(dilated_segment)
-
-		dilated_contour = []
-		for segment_idx in range(len(dilated_segments)):
-			segment = dilated_segments[segment_idx]
-			next_segment = dilated_segments[(segment_idx + 1) % len(dilated_segments)]
-			intersection = line_intersection(segment, next_segment)
-			#print('intersection', intersection)
-			dilated_contour.append(intersection)
-		#print('contour', dilated_contour)
-		#dilated_contour_array = numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
-		#	for (x,y) in dilated_contour])
-		dilated_contour_array = numpy.array(dilated_contour)
-
-		good.append(dilated_contour_array)
-	#print('GOOD', len(good))
 
 	# Filter out duplicate quads
 	tree = scipy.spatial.KDTree([corner for contour in good for corner in contour])
-	dist = numpy.linalg.norm([2, 2])
+	dist = numpy.linalg.norm([1, 1])
 	pairs = tree.query_pairs(dist)
 	#print('pairs', pairs)
 	connected_indices = collections.defaultdict(lambda: collections.defaultdict(list))
@@ -221,8 +147,7 @@ def main():
 	uniques = {left_idx:
 		[right_idx
 			for (right_idx, connected_pairs) in right_counts.iteritems()
-			#if len(connected_pairs) == 2
-			# If there is one overlapping corner, then check that some edge is collinear
+			# If there are overlapping corners, then check that the edges are collinear
 			if all(is_complementary_corner(pair[0], pair[1], good, color2) for pair in connected_pairs)
 			]
 		for (left_idx, right_counts) in connected_indices.iteritems()
@@ -237,9 +162,9 @@ def main():
 	#print('quads', len(quads))
 
 	contlines = numpy.zeros((color2.shape[0], color2.shape[1], 3), numpy.uint8)
-	#for contour in good:
-	#	cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
-	#	for (x,y) in contour]]), -1, (0, 0, 255), 1)
+	for contour in good:
+		cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
+		for (x,y) in contour]]), -1, (0, 0, 255), 1)
 	for contour in quads:
 		cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
 		for (x,y) in contour]]), -1, (255, 0, 0), 1)
@@ -1360,6 +1285,88 @@ def main():
 	key = cv2.waitKey(0)
 
 
+def filter_quads(contours):
+	approxes = []
+	for contour in contours:
+		#	contour = numpy.array([[p] for p in contour])
+		if len(contour) < 4:
+			continue
+		perimeter = cv2.arcLength(contour, closed=True)
+		# FIXME: The findChessboardCorners utility tries multiple thresholds between 1 and 7,
+		# and for each one it does two passes.
+		if len(contour) > 4:
+			approx = cv2.approxPolyDP(contour, perimeter/20, True)
+		elif len(contour) == 4:
+			approx = contour
+		else:
+			continue
+		approx = numpy.squeeze(approx)
+
+		#if len(approx) > 4:
+		#	approx = cv2.approxPolyDP(approx, 5, True)
+		if len(approx) != 4:
+			continue
+		# Any negative-oriented (clockwise) contours are rejected.
+		if numpy.cross(approx[1] - approx[0], approx[2] - approx[1]) >= 0:
+			continue
+		if not cv2.isContourConvex(approx):
+			continue
+		#if cv2.arcLength(approx,True) < 50:
+		#	continue
+		if cv2.contourArea(approx) < 40:
+			continue
+
+		# Remove bookshelf contours
+		#if approx[0][1] < 300:
+		#	continue
+
+		approxes.append(approx)
+	return approxes
+
+
+def dilate_contours(contours, kernel):
+	good = []
+	kernel_cloud = [(kpx - kernel.shape[0]/2, kpy - kernel.shape[1]/2)
+		for kpx in range(kernel.shape[0]) for kpy in range(kernel.shape[1])
+		if kernel[(kpx,kpy)]]
+	kernel_hull = [p[0] for p in cv2.convexHull(numpy.array(kernel_cloud))]
+
+	#print('kernel_cloud', kernel_cloud)
+	for approx in contours:
+		dilated_segments = []
+		# FIXME: This loop is even slower than running drawContours and findContours below
+		for segment_idx in range(len(approx)):
+			#print('-----------------')
+			#print('kernel', kernel_hull)
+			segment = numpy.array([approx[segment_idx], approx[(segment_idx + 1) % len(approx)]])
+			segment_vector = segment[1] - segment[0]
+			segment_unit = segment_vector / numpy.linalg.norm(segment_vector)
+
+			#print('segment', segment_vector)
+			rejection_vectors = (numpy.dot(kp, segment_unit) * segment_unit - kp
+				for kp in kernel_hull)
+			#print('segment', segment_vector, segment_unit)
+			#print('rejections', zip(rejection_vectors, kernel_hull))
+			offset = max(rejection_vectors, key=lambda rv: numpy.cross(segment_vector, rv))
+			#print('offset', offset)
+			dilated_segment = [p + offset for p in segment]
+			#print('dilated_segment', dilated_segment)
+			dilated_segments.append(dilated_segment)
+
+		dilated_contour = []
+		for segment_idx in range(len(dilated_segments)):
+			segment = dilated_segments[segment_idx]
+			next_segment = dilated_segments[(segment_idx + 1) % len(dilated_segments)]
+			intersection = line_intersection(segment, next_segment)
+			#print('intersection', intersection)
+			dilated_contour.append(intersection)
+		#print('contour', dilated_contour)
+		#dilated_contour_array = numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
+		#	for (x,y) in dilated_contour])
+		dilated_contour_array = numpy.array(dilated_contour)
+
+		good.append(dilated_contour_array)
+	return good
 
 def is_complementary_corner(left_idx, right_idx, quads, color2):
 	"""Tests whether the segments emanating from two quads' shared corner are collinear"""
