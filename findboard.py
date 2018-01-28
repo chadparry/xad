@@ -1288,37 +1288,26 @@ def main():
 def filter_quads(contours):
 	approxes = []
 	for contour in contours:
-		#	contour = numpy.array([[p] for p in contour])
-		if len(contour) < 4:
-			continue
-		perimeter = cv2.arcLength(contour, closed=True)
-		# FIXME: The findChessboardCorners utility tries multiple thresholds between 1 and 7,
-		# and for each one it does two passes.
 		if len(contour) > 4:
+			perimeter = cv2.arcLength(contour, closed=True)
 			approx = cv2.approxPolyDP(contour, perimeter/20, True)
+			#if len(approx) > 4:
+			#	approx = cv2.approxPolyDP(approx, 5, True)
+			if len(approx) != 4:
+				continue
 		elif len(contour) == 4:
 			approx = contour
 		else:
 			continue
 		approx = numpy.squeeze(approx)
 
-		#if len(approx) > 4:
-		#	approx = cv2.approxPolyDP(approx, 5, True)
-		if len(approx) != 4:
-			continue
 		# Any negative-oriented (clockwise) contours are rejected.
 		if numpy.cross(approx[1] - approx[0], approx[2] - approx[1]) >= 0:
 			continue
 		if not cv2.isContourConvex(approx):
 			continue
-		#if cv2.arcLength(approx,True) < 50:
-		#	continue
 		if cv2.contourArea(approx) < 40:
 			continue
-
-		# Remove bookshelf contours
-		#if approx[0][1] < 300:
-		#	continue
 
 		approxes.append(approx)
 	return approxes
