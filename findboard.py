@@ -34,13 +34,13 @@ def main():
 	cv2.namedWindow(WINNAME)
 
 	#webcam = cv2.VideoCapture(0)
-	webcam = cv2.VideoCapture('/usr/local/src/CVChess/data/videos/1.mov')
-	#webcam = cv2.VideoCapture('idaho.webm')
+	#webcam = cv2.VideoCapture('/usr/local/src/CVChess/data/videos/1.mov')
+	webcam = cv2.VideoCapture('idaho.webm')
 	if not webcam.isOpened():
 		raise RuntimeError('Failed to open camera')
 
-	#[webcam.read() for i in range(10)]
-	[webcam.read() for i in range(500)]
+	[webcam.read() for i in range(10)]
+	#[webcam.read() for i in range(500)]
 	#[webcam.read() for i in range(1500)]
 
 	if True:
@@ -65,9 +65,8 @@ def main():
 	refimg = cv2.cvtColor(refimgbw, cv2.COLOR_GRAY2BGR)
 	#cv2.imshow(WINNAME, refimg)
 	#key = cv2.waitKey(0)
-	(found, ref_chess) = cv2.findChessboardCorners(refimg, pattern_size)
-	ref_corners = [c[0] for c in ref_chess]
-	#print('chessboard corners', ref_corners)
+	#(found, ref_chess) = cv2.findChessboardCorners(refimg, pattern_size)
+	#ref_corners = [c[0] for c in ref_chess]
 
 	#(retval, color1) = webcam.read()
 	color1 = numpy.copy(color2)
@@ -91,7 +90,7 @@ def main():
 		#cv2.imshow(WINNAME, thresh)
 		#key = cv2.waitKey(0)
 
-		for dilation in [1, 2, 4]:
+		for dilation in [4, 1]:
 
 			kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(dilation, dilation))
 
@@ -144,27 +143,26 @@ def main():
 			#print(left, '=>', right)
 			connected_indices[left//4][right//4].append(pair)
 	#print('CONN_IND', len(connected_indices), connected_indices)
-	uniques = {left_idx:
-		[right_idx
-			for (right_idx, connected_pairs) in right_counts.iteritems()
-			# If there are overlapping corners, then check that the edges are collinear
-			if all(is_complementary_corner(pair[0], pair[1], good, color2) for pair in connected_pairs)
-			]
+	uniques = {left_idx: right_counts.keys()
 		for (left_idx, right_counts) in connected_indices.iteritems()
 		# If two quads overlap on 3 or more corners, then discard the one that was found
-		# first, which is the one found in the noiser image with the smaller block size.
-		if all(right_idx < left_idx or len(connected_pairs) < 3 for (right_idx, connected_pairs) in right_counts.iteritems())}
+		# first, which is the one found in the noiser image with the smaller block size and larger kernel size.
+		if all(
+			right_idx < left_idx or
+			all(is_complementary_corner(pair[0], pair[1], good, color2) for pair in connected_pairs)
+			for (right_idx, connected_pairs) in right_counts.iteritems())}
+
 	#print('UNIQUES', len(uniques), uniques)
-	connected_map = [left_idx for (left_idx, right_counts) in uniques.iteritems() if right_counts]
+	connected_map = [left_idx for (left_idx, right_keys) in uniques.iteritems() if any(key in uniques for key in right_keys)]
 	#print('CONN_MAP', len(connected_map), connected_map)
 	reverse_connected_map = {old_idx: new_idx for (new_idx, old_idx) in enumerate(connected_map)}
 	quads = [good[left_idx] for left_idx in connected_map]
-	#print('quads', len(quads))
+	print('quads', len(quads))
 
 	contlines = numpy.zeros((color2.shape[0], color2.shape[1], 3), numpy.uint8)
-	for contour in good:
-		cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
-		for (x,y) in contour]]), -1, (0, 0, 255), 1)
+	#for contour in good:
+	#	cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
+	#	for (x,y) in contour]]), -1, (0, 0, 255), 1)
 	for contour in quads:
 		cv2.drawContours(contlines, numpy.array([[(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1)))
 		for (x,y) in contour]]), -1, (255, 0, 0), 1)
@@ -994,109 +992,34 @@ def main():
 
 	tvec = numpy.array([0., 0., 1.])
 	def reverse_project(p):
-		proj = numpy.dot(numpy.linalg.inv(numpy.dot(default_mtx, numpy.concatenate([numpy.delete(r, 2, 1), tvec.reshape(3,1)], axis=1))), numpy.array(p).reshape(3,1))
+		#proj = numpy.dot(numpy.linalg.inv(numpy.dot(default_mtx, numpy.concatenate([numpy.delete(r, 2, 1), tvec.reshape(3,1)], axis=1))), numpy.array(p).reshape(3,1))
+		proj = numpy.dot(numpy.linalg.inv(numpy.dot(default_mtx, r)), numpy.array(p).reshape(3,1))
 		return (proj.reshape(1,3) / proj[2][0])[0][0:2]
 
+	inlier_points_flat = numpy.float32(inlier_quads.reshape(inlier_quads.shape[0] * inlier_quads.shape[1], 2))
+	criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.1)
+	accurate_points = cv2.cornerSubPix(img1, inlier_points_flat, (5,5), (-1,-1), criteria)
+	accurate_quads = accurate_points.reshape(*inlier_quads.shape)
+
+
+
+
+
+
 	bg = numpy.copy(color3)
-	rq = []
+	projected_quads = []
 	for quad in inlier_quads:
+		for cu in quad:
+			cv2.circle(bg, (int(round(cu[0])), int(round(cu[1]))), 2, (255, 0, 0))
+	for quad in accurate_quads:
 		quadpts = numpy.array([reverse_project([pt[0], pt[1], 1.]) for pt in quad])
-		rq.append(quadpts)
-		plot = numpy.array([[x * 30000 + 2000, y * 30000 + 300] for (x,y) in quadpts]).astype('int')
-		#print('reverse projected quad', plot, get_perimeter(quadpts))
+		projected_quads.append(quadpts)
 		cv2.drawContours(bg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
-		cv2.drawContours(bg, [plot], -1, (255, 0, 0), 2)
-	projected_quads = list(rq)
-	cv2.imshow(WINNAME, bg)
-	key = cv2.waitKey(1)
+		for cu in quad:
+			cv2.circle(bg, (int(round(cu[0])), int(round(cu[1]))), 3, (0, 255, 0))
+	#cv2.imshow(WINNAME, bg)
+	#key = cv2.waitKey(0)
 
-	# FIXME: Calculate the x and y deltas separately (ignoring lines' slant)
-	# once it is known that all quads are oriented consistently!
-
-	#print('perimeters-first', [get_perimeter(quad) for quad in rq])
-	perimeter = sum(get_perimeter(quad) for quad in rq)
-	avg = perimeter / float(len(rq))
-	#print('avg-first', avg, len(rq))
-	THRESHOLD = avg * 0.1
-	#print('perimeter errors', [abs(avg - get_perimeter(quad)) for quad in rq])
-	rq_inliers = [quad for quad in rq if abs(avg - get_perimeter(quad)) < THRESHOLD]
-	#print('perimeters-second', [get_perimeter(quad) for quad in rq_inliers])
-	perimeter = sum(get_perimeter(quad) for quad in rq_inliers)
-	avg = perimeter / float(len(rq_inliers))
-	#print('avg-second', avg, len(rq_inliers))
-	square = avg / 4.
-
-	for quadpts in rq_inliers:
-		plot = numpy.array([[x * 30000 + 2000, y * 30000 + 300] for (x,y) in quadpts]).astype('int')
-		cv2.drawContours(bg, [plot], -1, (0, 0, 255), 1)
-	cv2.imshow(WINNAME, bg)
-	key = cv2.waitKey(1)
-
-
-	# We need the best translation that puts the points closest to true square points.
-	# The translation in each dimension can be calculated independently.
-	# It doesn't matter which square the points are near, so that means that modular arithmetic is needed.
-	# The offsets need to be brought as close as possible to any integral values.
-	# To do that, the points are translated to points on a unit circle and the average angle is computed.
-	# TODO: This could distinguish between light and dark squares
-	biased_points = [[dim / square for dim in p] for quad in rq_inliers for p in quad]
-	angles = ([dim * math.pi*2 for dim in p] for p in biased_points)
-	(anglesx, anglesy) = zip(*angles)
-	biasanglex = math.atan2(
-		sum(math.sin(angle) for angle in anglesx),
-		sum(math.cos(angle) for angle in anglesx))
-	biasangley = math.atan2(
-		sum(math.sin(angle) for angle in anglesy),
-		sum(math.cos(angle) for angle in anglesy))
-	biasx = biasanglex / (math.pi*2)
-	biasy = biasangley / (math.pi*2)
-	translation = numpy.array([-biasx, -biasy, 0.])
-	shifted_points = ([x - biasx, y - biasy] for (x, y) in biased_points)
-	#print('translation', translation)
-	# FIXME: Then remove outliers and recalculate.
-	# FIXME: The numbers before the round should be nearly whole numbers!
-	shifted_points = list(shifted_points)
-	#print('before round', shifted_points)
-	grid_positions = [[int(round(dim)) for dim in p] for p in shifted_points]
-	min_position = (min(p[0] for p in grid_positions), min(p[1] for p in grid_positions))
-	max_position = (max(p[0] for p in grid_positions), max(p[1] for p in grid_positions))
-	padded_begin_position = (min_position[0] - 7, min_position[1] - 7)
-	padded_end_position = (max_position[0] + 8, max_position[1] + 8)
-	grid_corners = itertools.product(
-		range(padded_begin_position[0], padded_end_position[0] - padded_begin_position[0]),
-		range(padded_begin_position[1], padded_end_position[1] - padded_begin_position[1]))
-	grid_corners = list(grid_corners)
-	grid_corners_coord = (numpy.array([x, y, 1.]).reshape(3,1) for (x, y) in grid_corners)
-	zoom_in = numpy.array([[square, 0., 0.], [0., square, 0.], [0., 0., 1.]])
-	scaled = numpy.dot(r, zoom_in)
-	#print('square', square)
-	offsetM = numpy.array([[1., 0., biasx], [0., 1., biasy], [0., 0., 1.]])
-	reverse_homography_denorm = default_mtx.dot(
-			numpy.delete(numpy.concatenate([scaled, tvec.reshape(3,1)], axis=1), 2, 1)
-		).dot(offsetM)
-	reverse_homography = reverse_homography_denorm / reverse_homography_denorm[2][2]
-	#print('reverse', reverse_homography)
-	projected_grid_corners_denorm = (reverse_homography.dot(coord) for coord in grid_corners_coord)
-	project_grid_points = (coord.reshape(3)[:2] / coord[2] for coord in projected_grid_corners_denorm)
-
-	all_quad_pts = []
-	for quad in inlier_quads:
-		quadpts = numpy.array([reverse_project([pt[0], pt[1], 1.]) for pt in quad])
-		all_quad_pts.extend(quadpts)
-	quad_pts_center = ((max(x for (x,y) in all_quad_pts)+min(x for (x,y) in all_quad_pts))/2.,
-		(max(y for (x,y) in all_quad_pts)+min(y for (x,y) in all_quad_pts))/2.)
-	quad_pts_coef = min(bg.shape[1] / (max(x for (x,y) in all_quad_pts) - min(x for (x,y) in all_quad_pts)),
-		bg.shape[0] / (max(y for (x,y) in all_quad_pts) - min(y for (x,y) in all_quad_pts)))
-
-
-	#print(projected_quads)
-
-	# Find the average square size
-	#perimeters = numpy.array([get_perimeter(quad) for quad in projected_quads])
-	#outlier_perimeter_filter = identify_outliers(perimeters)
-	#filtered_perimeters = perimeters[outlier_perimeter_filter]
-	#avg_side = sum(filtered_perimeters) / float(len(filtered_perimeters) * 4)
-	#filtered_quads = numpy.array(projected_quads)[outlier_perimeter_filter]
 	x_perimeters = numpy.array([get_perimeter(numpy.array([(x, 0) for (x, y) in quad])) for quad in projected_quads])
 	y_perimeters = numpy.array([get_perimeter(numpy.array([(0, y) for (x, y) in quad])) for quad in projected_quads])
 	outlier_x_perimeter_filter = identify_outliers(x_perimeters)
@@ -1107,48 +1030,161 @@ def main():
 	avg_x_side = sum(filtered_x_perimeters) / float(len(filtered_x_perimeters) * 2)
 	avg_y_side = sum(filtered_y_perimeters) / float(len(filtered_y_perimeters) * 2)
 	filtered_quads = numpy.array(projected_quads)[outlier_perimeter_filter]
-	unprojected_quads = numpy.array(inlier_quads)[outlier_perimeter_filter]
+	unprojected_quads = numpy.array(accurate_quads)[outlier_perimeter_filter]
 	#print('AVG_SIDE', avg_x_side, avg_y_side)
 
-	x_values = (x for quad in filtered_quads for (x, y) in quad)
-	y_values = (y for quad in filtered_quads for (x, y) in quad)
-	# Plot the points on a unit circle, where it wraps around again every avg_side.
-	x_radians = [x * 2*math.pi / avg_x_side for x in x_values]
-	y_radians = [y * 2*math.pi / avg_y_side for y in y_values]
-	# Now average all the vectors on the unit circle to find an average that isn't fooled by the wrapping.
-	offset_angle_x = math.atan2(
-		sum(math.sin(angle) for angle in x_radians),
-		sum(math.cos(angle) for angle in x_radians))
-	offset_angle_y = math.atan2(
-		sum(math.sin(angle) for angle in y_radians),
-		sum(math.cos(angle) for angle in y_radians))
-	# Use that to get the average offset
-	avg_x_offset = offset_angle_x / (2*math.pi)
-	avg_y_offset = offset_angle_y / (2*math.pi)
-	# Shift all the quads so they should now lie on an integral grid
-	transformed_quads = [[(x / avg_x_side - avg_x_offset, y / avg_y_side - avg_y_offset) for (x, y) in quad] for quad in filtered_quads]
-	#print("TRANSFORMED", transformed_quads)
-	# Snap all points to the nearest grid position
-	snapped_quads = [[(int(round(x)), int(round(y))) for (x, y) in quad] for quad in transformed_quads]
-	all_snapped_pts = [p for quad in snapped_quads for p in quad]
-	all_transformed_pts = (p for quad in transformed_quads for p in quad)
-	snap_distance = (numpy.linalg.norm([sp[0] - tp[0], sp[1] - tp[1]]) for (sp, tp) in zip(all_snapped_pts, all_transformed_pts))
-	outlier_snap_filter = [d < 1/8. for d in snap_distance]
-	snapped_pts = list(itertools.compress(all_snapped_pts, outlier_snap_filter))
-	transformed_pts = list(itertools.compress((p for quad in transformed_quads for p in quad), outlier_snap_filter))
-
-	# Match the snapped points with their original image locations
 	unprojected_pts_with_outliers = unprojected_quads.reshape((len(unprojected_quads)*4, 2))
-	unprojected_pts = unprojected_pts_with_outliers[outlier_snap_filter]
-	snapped_pts_coord = numpy.array([[x, y, 1.] for (x, y) in snapped_pts])
+	tree = scipy.spatial.KDTree(unprojected_pts_with_outliers)
+	dedup_dist = numpy.linalg.norm([.1, .1])
+	dup_pairs = tree.query_pairs(dedup_dist)
+	unique_filter = [True for _ in unprojected_pts_with_outliers]
+	for pair in dup_pairs:
+		sp = sorted(pair)
+		dup_idx = sp[0]
+		unique_filter[dup_idx] = False
 
-	(h, w, _) = color3.shape
-	f = max(h, w)
-	fx = fy = f
-	default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
-	# TODO: Supply the previously-found rvec and tvec as an optimization
-	s, rvecs, tvecs = cv2.solvePnP(snapped_pts_coord, unprojected_pts, default_mtx, dist)
-	inliers = [[i] for i in xrange(len(unprojected_pts))]
+
+
+	# Perform several iterations to refine the pose
+	last_inlier_count = 0
+	prev_outlier_snap_filter = set()
+	while True:
+
+		x_values = (x for quad in filtered_quads for (x, y) in quad)
+		y_values = (y for quad in filtered_quads for (x, y) in quad)
+		# Plot the points on a unit circle, where it wraps around again every avg_side
+		x_radians = [x * 2*math.pi / avg_x_side for x in x_values]
+		y_radians = [y * 2*math.pi / avg_y_side for y in y_values]
+		# Now average all the vectors on the unit circle to find an average that is robust against wrapping
+		offset_angle_x = math.atan2(
+			sum(math.sin(angle) for angle in x_radians),
+			sum(math.cos(angle) for angle in x_radians))
+		offset_angle_y = math.atan2(
+			sum(math.sin(angle) for angle in y_radians),
+			sum(math.cos(angle) for angle in y_radians))
+		# Use that to get the average offset
+		avg_x_offset = offset_angle_x / (2*math.pi)
+		avg_y_offset = offset_angle_y / (2*math.pi)
+		# Shift all the quads so they should now lie on an integral grid
+		transformed_quads = [[(x / avg_x_side - avg_x_offset, y / avg_y_side - avg_y_offset) for (x, y) in quad] for quad in filtered_quads]
+		#print("TRANSFORMED", transformed_quads)
+		# Snap all points to the nearest grid position
+		snapped_quads = [[(int(round(x)), int(round(y))) for (x, y) in quad] for quad in transformed_quads]
+		all_snapped_pts = [p for quad in snapped_quads for p in quad]
+		all_transformed_pts = (p for quad in transformed_quads for p in quad)
+		snap_distance = (numpy.linalg.norm([sp[0] - tp[0], sp[1] - tp[1]]) for (sp, tp) in zip(all_snapped_pts, all_transformed_pts))
+		#outlier_snap_filter = [d < 1/8. for d in snap_distance]
+		outlier_snap_filter_pre = identify_outliers(numpy.array(list(snap_distance)))
+		outlier_snap_filter = [all(f) for f in zip(outlier_snap_filter_pre, unique_filter)]
+		#snapped_pts = list(itertools.compress(all_snapped_pts, outlier_snap_filter))
+		#transformed_pts = list(itertools.compress((p for quad in transformed_quads for p in quad), outlier_snap_filter))
+		snapped_pts = numpy.array(all_snapped_pts)[outlier_snap_filter]
+		transformed_pts = numpy.array([p for quad in transformed_quads for p in quad])[outlier_snap_filter]
+		inlier_count = len(snapped_pts)
+
+		# Match the snapped points with their original image locations
+		unprojected_pts = unprojected_pts_with_outliers[outlier_snap_filter]
+		snapped_pts_coord = numpy.array([[x, y, 0.] for (x, y) in snapped_pts])
+
+		#print('sorted snapped', sorted([tuple(p) for p in snapped_pts]))
+		#print('snapped', [[tuple(p) for p in quad] for quad in snapped_quads])
+		#print('unprojected', unprojected_pts)
+		print('inlier_count', last_inlier_count, '->', inlier_count, 'uniq', len(set(tuple(p) for p in snapped_pts)))
+
+		(h, w, _) = color3.shape
+		f = max(h, w)
+		fx = fy = f
+		default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
+		# TODO: As an optimization, supply the inverse of the (r,tvec) pose already calculated.
+		success, rvecs, tvecs = cv2.solvePnP(snapped_pts_coord, unprojected_pts, default_mtx, dist)
+		if not success:
+			raise RuntimeError('Failed to find pose')
+
+		#print('before', r, tvec)
+		newr, newj = cv2.Rodrigues(rvecs)
+		#print('pose', rvecs, tvecs)
+		#print('pose rodrigues', newr, tvecs)
+		#print('homography', numpy.concatenate([newr, tvecs], axis=1))
+		cameraMatrix, rotMatrix, transVect, rotMatrixX, rotMatrixY, rotMatrixZ, eulerAngles = cv2.decomposeProjectionMatrix(numpy.concatenate([newr, tvecs], axis=1))
+		#print('decomposed', cameraMatrix, rotMatrix, transVect)
+
+
+		projm = numpy.concatenate([newr, tvecs], axis=1)
+		homog = numpy.concatenate([numpy.delete(newr, 2, 1), tvecs], axis=1)
+		r = homog
+		#r = numpy.linalg.inv(homog)
+		#tvec = r[:,2:]
+		#print('trying', homog)
+
+		min_snapped_x = min(x for (x, y) in snapped_pts) - 8
+		min_snapped_y = min(y for (x, y) in snapped_pts) - 8
+		rimg = numpy.copy(refimg)
+		warp_trans = numpy.array([[1., 0, float(min_snapped_x + 7)], [0., 1., float(min_snapped_y + 7)], [0., 0., 1.]])
+		warp_scale = numpy.array([[1/100., 0, 0.], [0., 1/100., 0.], [0., 0., 1.]])
+		warp_h = numpy.dot(numpy.dot(homog, warp_trans), warp_scale)
+		warp_m = numpy.linalg.inv(numpy.dot(default_mtx, warp_h))
+		rimg = cv2.warpPerspective(color3, warp_m, refimg.shape[:2])
+		for g in xrange(9):
+			cv2.line(rimg, (0, g * 100), (800, g * 100), (0, 0, 0))
+			cv2.line(rimg, (g * 100, 0), (g * 100, 800), (0, 0, 0))
+		for quad in [[(x / avg_x_side - avg_x_offset, y / avg_y_side - avg_y_offset) for (x, y) in quad] for quad in filtered_quads]:
+			for bp in quad:
+				cv2.circle(rimg, (int(round((bp[0]-min_snapped_x-7)*100)), int(round((bp[1]-min_snapped_y-7)*100))), 4, (255, 0, 0), -1)
+
+		apff = list(itertools.compress((p for quad in transformed_quads for p in quad), outlier_snap_filter))
+
+		for bp in apff:
+			cv2.circle(rimg, (int(round((bp[0]-min_snapped_x-7)*100)), int(round((bp[1]-min_snapped_y-7)*100))), 4, (0, 0, 255), -1)
+		cv2.imshow(WINNAME, rimg)
+		key = cv2.waitKey(0)
+
+
+		bg = numpy.copy(color3)
+		max_snapped_x = max(x for (x, y) in snapped_pts) + 7
+		max_snapped_y = max(y for (x, y) in snapped_pts) + 7
+		grid_corners = [[(x, y)
+			for x in range(min_snapped_x, max_snapped_x + 1)]
+			for y in range(min_snapped_y, max_snapped_y + 1)]
+		grid_corners_coord = numpy.array([[float(x), float(y), 0.] for row_corners in grid_corners for (x, y) in row_corners])
+		project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
+		#print('GRID', min_snapped_x, max_snapped_x, min_snapped_y, max_snapped_y)
+		project_grid_points_flat = project_grid_points_result.reshape(project_grid_points_result.shape[0], 2)
+		project_grid_points = project_grid_points_result.reshape(max_snapped_y + 1 - min_snapped_y, max_snapped_x + 1 - min_snapped_x, 2)
+		for cu in project_grid_points_flat:
+			cv2.circle(bg, (int(round(cu[0])), int(round(cu[1]))), 3, (0, 255, 0))
+		for quad in inlier_quads:
+			for cu in quad:
+				cv2.circle(bg, (int(round(cu[0])), int(round(cu[1]))), 2, (255, 0, 0))
+		for cu in unprojected_pts:
+			cv2.circle(bg, (int(round(cu[0])), int(round(cu[1]))), 3, (0, 0, 255))
+		for bp in apff:
+			ubp = numpy.dot(numpy.dot(default_mtx, projm), numpy.array([bp[0], bp[1], 0., 1.]).reshape(4,1))
+			nubp = [ubp[0][0] / ubp[2][0], ubp[1][0] / ubp[2][0]]
+			#cv2.circle(bg, (int(round(nubp[0])), int(round(nubp[1]))), 3, (0, 0, 255))
+
+		cv2.imshow(WINNAME, bg)
+		key = cv2.waitKey(0)
+
+		hashable_outlier_snap_filter = tuple(outlier_snap_filter)
+		if hashable_outlier_snap_filter in prev_outlier_snap_filter:
+			break
+		last_inlier_count = inlier_count
+		prev_outlier_snap_filter.add(hashable_outlier_snap_filter)
+
+
+
+
+
+		filtered_quads = []
+		for quad in unprojected_quads:
+			quadpts = numpy.array([reverse_project([pt[0], pt[1], 1.]) for pt in quad])
+			filtered_quads.append(quadpts)
+
+		avg_x_side = 1.
+		avg_y_side = 1.
+
+
+
 
 	min_snapped_x = min(x for (x, y) in snapped_pts) - 7
 	min_snapped_y = min(y for (x, y) in snapped_pts) - 7
@@ -1160,70 +1196,26 @@ def main():
 	grid_corners = [[(x, y)
 		for x in range(min_snapped_x, max_snapped_x + 1)]
 		for y in range(min_snapped_y, max_snapped_y + 1)]
-	grid_corners_coord = numpy.array([[float(x), float(y), 1.] for row_corners in grid_corners for (x, y) in row_corners])
+	grid_corners_coord = numpy.array([[float(x), float(y), 0.] for row_corners in grid_corners for (x, y) in row_corners])
 	project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
 	#print('GRID', min_snapped_x, max_snapped_x, min_snapped_y, max_snapped_y)
 	project_grid_points_flat = project_grid_points_result.reshape(project_grid_points_result.shape[0], 2)
 	project_grid_points = project_grid_points_result.reshape(max_snapped_y + 1 - min_snapped_y, max_snapped_x + 1 - min_snapped_x, 2)
 
 
-	bg = numpy.copy(color3)
-	for quadpts in projected_quads:
-		plot = numpy.array([[(x - quad_pts_center[0]) * quad_pts_coef + bg.shape[1]/2., (y - quad_pts_center[1]) * quad_pts_coef + bg.shape[0]/2.] for (x,y) in quadpts]).astype('int')
-		#print('reverse projected quad', plot, get_perimeter(quadpts))
-		#cv2.drawContours(bg, [plot], -1, (255, 0, 0), 2)
-	all_quad_pts = [p for quad in transformed_quads for p in quad]
-	quad_pts_center = ((max(x for (x,y) in all_quad_pts)+min(x for (x,y) in all_quad_pts))/2.,
-		(max(y for (x,y) in all_quad_pts)+min(y for (x,y) in all_quad_pts))/2.)
-	quad_pts_coef = min(bg.shape[1] / (max(x for (x,y) in all_quad_pts) - min(x for (x,y) in all_quad_pts)),
-		bg.shape[0] / (max(y for (x,y) in all_quad_pts) - min(y for (x,y) in all_quad_pts)))
-	for quadpts in transformed_quads:
-		plot = numpy.array([[(x - quad_pts_center[0]) * quad_pts_coef + bg.shape[1]/2., (y - quad_pts_center[1]) * quad_pts_coef + bg.shape[0]/2.] for (x,y) in quadpts]).astype('int')
-		#print('reverse projected quad', plot, get_perimeter(quadpts))
-		#cv2.drawContours(bg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
-		cv2.drawContours(bg, [plot], -1, (255, 0, 255), 2)
-		#for corner in plot:
-		#	cv2.circle(bg, tuple(corner), random.randint(1, 24), (0, 255, 255))
-		#cv2.imshow(WINNAME, bg)
-		#key = cv2.waitKey(100)
-	for (x, y) in transformed_pts:
-		pt = (int((x - quad_pts_center[0]) * quad_pts_coef + bg.shape[1]/2.), int((y - quad_pts_center[1]) * quad_pts_coef + bg.shape[0]/2.))
-		#print('reverse projected quad', plot, get_perimeter(quadpts))
-		#cv2.drawContours(bg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
-		#cv2.circle(bg, tuple(pt), random.randint(1, 7), (0, 255, 255))
-		cv2.circle(bg, tuple(pt), 2, (0, 255, 255))
-
-	for row in grid_corners:
-		for c in row:
-			plot = (int((c[0] - quad_pts_center[0]) * quad_pts_coef + bg.shape[1]/2.), int((c[1] - quad_pts_center[1]) * quad_pts_coef + bg.shape[0]/2.))
-			if plot[0] >= 0 and plot[1] >= 0:
-				cv2.circle(bg, plot, 2, (0, 255, 0))
-	for quadpts in snapped_quads:
-		plot = numpy.array([[(x - quad_pts_center[0]) * quad_pts_coef + bg.shape[1]/2., (y - quad_pts_center[1]) * quad_pts_coef + bg.shape[0]/2.] for (x,y) in quadpts]).astype('int')
-		cv2.drawContours(bg, [plot], -1, (255, 0, 0), 1)
-	#print(quad_pts_center, bg.shape)
-	cv2.imshow(WINNAME, bg)
-	key = cv2.waitKey(1)
-
-
-
 	pimg = numpy.copy(color3)
-	for quad in inlier_quads:
+	for quad in accurate_quads:
 		cv2.drawContours(pimg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
-	snapped_pts_coord = numpy.array([[x, y, 1.] for (x, y) in snapped_pts])
+	snapped_pts_coord = numpy.array([[x, y, 0.] for (x, y) in snapped_pts])
 	project_snapped_points, j = cv2.projectPoints(snapped_pts_coord, rvecs, tvecs, default_mtx, dist)
 	for cp in project_grid_points_flat:
 		cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 1, (0, 255, 0))
-	inlier_set = frozenset(idx[0] for idx in inliers)
 	for (idx, (cu, cp)) in enumerate(zip(unprojected_pts, project_snapped_points)):
-		#if idx not in inlier_set:
-		#	cv2.circle(pimg, (int(round(cu[0])), int(round(cu[1]))), 4, (255, 0, 0))
-		#	continue
 		cv2.line(pimg, (int(round(cu[0])), int(round(cu[1]))), (int(round(cp[0][0])), int(round(cp[0][1]))), (255,0,0), 1)
 		cv2.circle(pimg, (int(round(cu[0])), int(round(cu[1]))), 4, (0, 255, 255))
-		cv2.circle(pimg, (int(round(cp[0][0])), int(round(cp[0][1]))), 2, (0, 255, 0))
-	#cv2.imshow(WINNAME, pimg)
-	#key = cv2.waitKey(0)
+		cv2.circle(pimg, (int(round(cp[0][0])), int(round(cp[0][1]))), 4, (255, 0, 0))
+	cv2.imshow(WINNAME, pimg)
+	key = cv2.waitKey(0)
 
 
 	criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.1)
@@ -1235,6 +1227,17 @@ def main():
 	corner_likelihood = cv2.cornerHarris(img1,2,3,0.04)
 	default_corner_likelihood = 0
 
+	pimg = numpy.copy(color3)
+	for cp in project_grid_points_flat:
+		cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 3, (0, 255, 0))
+	#for bp in corners_flat:
+	#	cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 3, (0, 255, 255))
+	for bp in unprojected_pts:
+		cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 5, (255, 0, 0))
+	#cv2.imshow(WINNAME, pimg)
+	#cv2.imshow(WINNAME, corner_likelihood*10000000)
+	#key = cv2.waitKey(0)
+
 	corner_scores = [[corner_likelihood.item(y, x)**2
 		if x >= 0 and y >= 0 and x < corner_likelihood.shape[1] and y < corner_likelihood.shape[0]
 		else default_corner_likelihood
@@ -1245,19 +1248,22 @@ def main():
 	board_max_idx = numpy.unravel_index(board_max_flat_idx, board_scores.shape[:2])
 	best_corners = corners[board_max_idx[0]:board_max_idx[0]+9, board_max_idx[1]:board_max_idx[1]+9]
 
-	#pimg = numpy.copy(color3)
-	#for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
-	#	cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 2, (0, 255, 0))
-	#for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
-	#	cv2.circle(corner_likelihood, (int(round(bp[0])), int(round(bp[1]))), 8, 255)
-	#cv2.imshow(WINNAME, pimg)
-	#key = cv2.waitKey(1)
+	pimg = numpy.copy(color3)
+	for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
+		cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 2, (0, 255, 0))
+	for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
+		cv2.circle(corner_likelihood, (int(round(bp[0])), int(round(bp[1]))), 8, 255)
+	cv2.imshow(WINNAME, pimg)
+	#cv2.imshow(WINNAME, corner_likelihood*10000000)
+	key = cv2.waitKey(0)
 
 
 	best_corners_flat = best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2])
-	grid_corners_coord = numpy.array([[float(x), float(y), 1.] for y in xrange(9) for x in xrange(9)])
+	grid_corners_coord = numpy.array([[float(x), float(y), 0.] for y in xrange(9) for x in xrange(9)])
 	# FIXME: Detect the correct color orientation!
-	s, rvecs, tvecs = cv2.solvePnP(grid_corners_coord, best_corners_flat, default_mtx, dist, rvecs, tvecs, useExtrinsicGuess=True)
+	success, rvecs, tvecs = cv2.solvePnP(grid_corners_coord, best_corners_flat, default_mtx, dist, rvecs, tvecs, useExtrinsicGuess=True)
+	if not success:
+		raise RuntimeError('Failed to find pose')
 	project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
 	project_grid_points = project_grid_points_result.reshape(9, 9, 2)
 	pimg = numpy.copy(color3)
@@ -1281,8 +1287,8 @@ def main():
 			cv2.fillPoly(pimg, square, (0, 0, 0))
 	#for bp in project_grid_points.reshape(project_grid_points.shape[0] * project_grid_points.shape[1], project_grid_points.shape[2]):
 	#	cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 5, (0, 255, 0))
-	cv2.imshow(WINNAME, pimg)
-	key = cv2.waitKey(0)
+	#cv2.imshow(WINNAME, pimg)
+	#key = cv2.waitKey(0)
 
 
 def filter_quads(contours):
@@ -2130,6 +2136,7 @@ def get_vps(quads, precalculated=[None,None]):
 def identify_outliers(data, m = 2.):
     d = numpy.abs(data - numpy.median(data))
     mdev = numpy.median(d)
+    print('mdev', mdev)
     s = d/(mdev if mdev else 1.)
     #return data[s<m]
     return s<m
