@@ -1044,8 +1044,6 @@ def main():
 		dup_idx = sp[0]
 		unique_filter[dup_idx] = False
 
-
-
 	# Perform several iterations to refine the pose
 	last_inlier_count = 0
 	prev_outlier_snap_filter = set()
@@ -1076,7 +1074,8 @@ def main():
 		snap_distance = (numpy.linalg.norm([sp[0] - tp[0], sp[1] - tp[1]]) for (sp, tp) in zip(all_snapped_pts, all_transformed_pts))
 		#outlier_snap_filter = [d < 1/8. for d in snap_distance]
 		outlier_snap_filter_pre = identify_outliers(numpy.array(list(snap_distance)))
-		outlier_snap_filter = [all(f) for f in zip(outlier_snap_filter_pre, unique_filter)]
+		#outlier_snap_filter = [all(f) for f in zip(outlier_snap_filter_pre, unique_filter)]
+		outlier_snap_filter = outlier_snap_filter_pre
 		#snapped_pts = list(itertools.compress(all_snapped_pts, outlier_snap_filter))
 		#transformed_pts = list(itertools.compress((p for quad in transformed_quads for p in quad), outlier_snap_filter))
 		snapped_pts = numpy.array(all_snapped_pts)[outlier_snap_filter]
@@ -1149,8 +1148,8 @@ def main():
 
 		for bp in apff:
 			cv2.circle(rimg, (int(round((bp[0]-min_snapped_x-7)*100)), int(round((bp[1]-min_snapped_y-7)*100))), 4, (0, 0, 255), -1)
-		cv2.imshow(WINNAME, rimg)
-		key = cv2.waitKey(0)
+		#cv2.imshow(WINNAME, rimg)
+		#key = cv2.waitKey(0)
 
 
 		bg = numpy.copy(color3)
