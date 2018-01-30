@@ -1001,7 +1001,8 @@ def main():
 	accurate_points = cv2.cornerSubPix(img1, inlier_points_flat, (5,5), (-1,-1), criteria)
 	accurate_quads = accurate_points.reshape(*inlier_quads.shape)
 
-
+	rvecs, j = cv2.Rodrigues(r)
+	tvecs = tvec.reshape(3, 1)
 
 
 
@@ -1084,7 +1085,7 @@ def main():
 
 		# Match the snapped points with their original image locations
 		unprojected_pts = unprojected_pts_with_outliers[outlier_snap_filter]
-		snapped_pts_coord = numpy.array([[x, y, 0.] for (x, y) in snapped_pts])
+		snapped_pts_coord = numpy.array([[float(x), float(y), 0.] for (x, y) in snapped_pts])
 
 		#print('sorted snapped', sorted([tuple(p) for p in snapped_pts]))
 		#print('snapped', [[tuple(p) for p in quad] for quad in snapped_quads])
@@ -1095,17 +1096,16 @@ def main():
 		f = max(h, w)
 		fx = fy = f
 		default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
-		# TODO: As an optimization, supply the inverse of the (r,tvec) pose already calculated.
-		success, rvecs, tvecs = cv2.solvePnP(snapped_pts_coord, unprojected_pts, default_mtx, dist)
-		if not success:
-			raise RuntimeError('Failed to find pose')
+		#success, rvecs, tvecs = cv2.solvePnP(snapped_pts_coord, unprojected_pts, default_mtx, dist, rvecs, tvecs, useExtrinsicGuess=(last_inlier_count != 0))
+		#if not success:
+		#	raise RuntimeError('Failed to find pose')
 
 		#print('before', r, tvec)
 		newr, newj = cv2.Rodrigues(rvecs)
 		#print('pose', rvecs, tvecs)
 		#print('pose rodrigues', newr, tvecs)
 		#print('homography', numpy.concatenate([newr, tvecs], axis=1))
-		cameraMatrix, rotMatrix, transVect, rotMatrixX, rotMatrixY, rotMatrixZ, eulerAngles = cv2.decomposeProjectionMatrix(numpy.concatenate([newr, tvecs], axis=1))
+		#cameraMatrix, rotMatrix, transVect, rotMatrixX, rotMatrixY, rotMatrixZ, eulerAngles = cv2.decomposeProjectionMatrix(numpy.concatenate([newr, tvecs], axis=1))
 		#print('decomposed', cameraMatrix, rotMatrix, transVect)
 
 
@@ -1116,8 +1116,22 @@ def main():
 		#tvec = r[:,2:]
 		#print('trying', homog)
 
+
+
 		min_snapped_x = min(x for (x, y) in snapped_pts) - 8
 		min_snapped_y = min(y for (x, y) in snapped_pts) - 8
+		#homog_src_pts = numpy.array([(float((x-min_snapped_x-7)*100), float((y-min_snapped_y-7)*100)) for (x, y) in snapped_pts])
+		homog_src_pts = numpy.array([(float(x), float(y)) for (x, y) in snapped_pts])
+		#print('pnp r', r)
+		#print('snapped', homog_src_pts)
+		#print('unprojected', unprojected_pts)
+		fhomog, mask = cv2.findHomography(homog_src_pts, unprojected_pts)
+		homog = numpy.dot(numpy.linalg.inv(default_mtx), fhomog)
+		r = homog
+		#print('homog r', r)
+		#print('round trip', numpy.linalg.inv(fhomog), numpy.linalg.inv(numpy.dot(default_mtx, warp_h)))
+
+
 		rimg = numpy.copy(refimg)
 		warp_trans = numpy.array([[1., 0, float(min_snapped_x + 7)], [0., 1., float(min_snapped_y + 7)], [0., 0., 1.]])
 		warp_scale = numpy.array([[1/100., 0, 0.], [0., 1/100., 0.], [0., 0., 1.]])
@@ -1162,8 +1176,8 @@ def main():
 			nubp = [ubp[0][0] / ubp[2][0], ubp[1][0] / ubp[2][0]]
 			#cv2.circle(bg, (int(round(nubp[0])), int(round(nubp[1]))), 3, (0, 0, 255))
 
-		cv2.imshow(WINNAME, bg)
-		key = cv2.waitKey(0)
+		#cv2.imshow(WINNAME, bg)
+		#key = cv2.waitKey(0)
 
 		hashable_outlier_snap_filter = tuple(outlier_snap_filter)
 		if hashable_outlier_snap_filter in prev_outlier_snap_filter:
@@ -1185,6 +1199,7 @@ def main():
 
 
 
+		break
 
 	min_snapped_x = min(x for (x, y) in snapped_pts) - 7
 	min_snapped_y = min(y for (x, y) in snapped_pts) - 7
@@ -1197,23 +1212,25 @@ def main():
 		for x in range(min_snapped_x, max_snapped_x + 1)]
 		for y in range(min_snapped_y, max_snapped_y + 1)]
 	grid_corners_coord = numpy.array([[float(x), float(y), 0.] for row_corners in grid_corners for (x, y) in row_corners])
-	project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
+	#project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
+	project_grid_points = cv2.perspectiveTransform(numpy.float32(grid_corners), fhomog)
 	#print('GRID', min_snapped_x, max_snapped_x, min_snapped_y, max_snapped_y)
-	project_grid_points_flat = project_grid_points_result.reshape(project_grid_points_result.shape[0], 2)
-	project_grid_points = project_grid_points_result.reshape(max_snapped_y + 1 - min_snapped_y, max_snapped_x + 1 - min_snapped_x, 2)
+	project_grid_points_flat = project_grid_points.reshape(project_grid_points.shape[0] * project_grid_points.shape[1], 2)
+	#project_grid_points = project_grid_points_result.reshape(max_snapped_y + 1 - min_snapped_y, max_snapped_x + 1 - min_snapped_x, 2)
 
 
 	pimg = numpy.copy(color3)
 	for quad in accurate_quads:
 		cv2.drawContours(pimg, [numpy.array(quad).astype('int')], -1, (0, 0, 255), 1)
 	snapped_pts_coord = numpy.array([[x, y, 0.] for (x, y) in snapped_pts])
-	project_snapped_points, j = cv2.projectPoints(snapped_pts_coord, rvecs, tvecs, default_mtx, dist)
+	#project_snapped_points, j = cv2.projectPoints(snapped_pts_coord, rvecs, tvecs, default_mtx, dist)
+	project_snapped_points = cv2.perspectiveTransform(numpy.float32([snapped_pts]), fhomog)
 	for cp in project_grid_points_flat:
 		cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 1, (0, 255, 0))
-	for (idx, (cu, cp)) in enumerate(zip(unprojected_pts, project_snapped_points)):
-		cv2.line(pimg, (int(round(cu[0])), int(round(cu[1]))), (int(round(cp[0][0])), int(round(cp[0][1]))), (255,0,0), 1)
+	for (idx, (cu, cp)) in enumerate(zip(unprojected_pts, project_snapped_points[0])):
+		cv2.line(pimg, (int(round(cu[0])), int(round(cu[1]))), (int(round(cp[0])), int(round(cp[1]))), (255,0,0), 1)
 		cv2.circle(pimg, (int(round(cu[0])), int(round(cu[1]))), 4, (0, 255, 255))
-		cv2.circle(pimg, (int(round(cp[0][0])), int(round(cp[0][1]))), 4, (255, 0, 0))
+		cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 4, (255, 0, 0))
 	cv2.imshow(WINNAME, pimg)
 	key = cv2.waitKey(0)
 
