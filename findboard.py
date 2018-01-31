@@ -39,8 +39,8 @@ def main():
 	if not webcam.isOpened():
 		raise RuntimeError('Failed to open camera')
 
-	[webcam.read() for i in range(10)]
-	#[webcam.read() for i in range(500)]
+	#[webcam.read() for i in range(10)]
+	[webcam.read() for i in range(500)]
 	#[webcam.read() for i in range(1500)]
 
 	if True:
@@ -1230,17 +1230,18 @@ def main():
 		cv2.line(pimg, (int(round(cu[0])), int(round(cu[1]))), (int(round(cp[0])), int(round(cp[1]))), (255,0,0), 1)
 		cv2.circle(pimg, (int(round(cu[0])), int(round(cu[1]))), 4, (0, 255, 255))
 		cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 4, (255, 0, 0))
-	cv2.imshow(WINNAME, pimg)
-	key = cv2.waitKey(0)
+	#cv2.imshow(WINNAME, pimg)
+	#key = cv2.waitKey(0)
 
 
 	criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.1)
 	#print('points', project_grid_points)
-	corners_flat = cv2.cornerSubPix(img1, numpy.float32(project_grid_points_flat), (5,5), (-1,-1), criteria)
+	corners_flat = cv2.cornerSubPix(img1, numpy.float32(numpy.copy(project_grid_points_flat)), (5,5), (-1,-1), criteria)
 	corners = corners_flat.reshape(*project_grid_points.shape)
 	# TODO: Calculate the scores only for the relevant grid points
 	# TODO: Also make sure the calculation has subpixel accuracy
-	corner_likelihood = cv2.cornerHarris(img1,2,3,0.04)
+	img1f = img1.astype('float')
+	corner_likelihood = cv2.log(cv2.Scharr(img1f, -1, 1, 0)**2 + cv2.Scharr(img1f, -1, 0, 1)**2)
 	default_corner_likelihood = 0
 
 	pimg = numpy.copy(color3)
@@ -1254,7 +1255,7 @@ def main():
 	#cv2.imshow(WINNAME, corner_likelihood*10000000)
 	#key = cv2.waitKey(0)
 
-	corner_scores = [[corner_likelihood.item(y, x)**2
+	corner_scores = [[corner_likelihood.item(y, x)
 		if x >= 0 and y >= 0 and x < corner_likelihood.shape[1] and y < corner_likelihood.shape[0]
 		else default_corner_likelihood
 			for (x, y) in ((int(round(cp[0])), int(round(cp[1]))) for cp in corners_row)]
@@ -1264,11 +1265,18 @@ def main():
 	board_max_idx = numpy.unravel_index(board_max_flat_idx, board_scores.shape[:2])
 	best_corners = corners[board_max_idx[0]:board_max_idx[0]+9, board_max_idx[1]:board_max_idx[1]+9]
 
-	pimg = numpy.copy(color3)
+	#pimg = cv2.cvtColor(numpy.int32(corner_likelihood*10000000), cv2.COLOR_GRAY2BGR)
+	#pimg = numpy.copy(color3)
+	#pimg[corner_likelihood>0.01*corner_likelihood.max()]=[255,255,255]
+	scaled_corner_likelihood = corner_likelihood / corner_likelihood.max()
+	color_corner_likelihood = [[(c, c, c) for c in row] for row in scaled_corner_likelihood]
+	pimg = numpy.copy(color_corner_likelihood)
+	for cp in project_grid_points_flat:
+		cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 4, (0, 255, 0))
 	for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
-		cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 2, (0, 255, 0))
-	for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
-		cv2.circle(corner_likelihood, (int(round(bp[0])), int(round(bp[1]))), 8, 255)
+		cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 4, (0, 255, 255))
+	#for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
+	#	cv2.circle(corner_likelihood, (int(round(bp[0])), int(round(bp[1]))), 8, 255)
 	cv2.imshow(WINNAME, pimg)
 	#cv2.imshow(WINNAME, corner_likelihood*10000000)
 	key = cv2.waitKey(0)
@@ -1277,10 +1285,17 @@ def main():
 	best_corners_flat = best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2])
 	grid_corners_coord = numpy.array([[float(x), float(y), 0.] for y in xrange(9) for x in xrange(9)])
 	# FIXME: Detect the correct color orientation!
-	success, rvecs, tvecs = cv2.solvePnP(grid_corners_coord, best_corners_flat, default_mtx, dist, rvecs, tvecs, useExtrinsicGuess=True)
-	if not success:
-		raise RuntimeError('Failed to find pose')
-	project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
+	#success, rvecs, tvecs = cv2.solvePnP(grid_corners_coord, best_corners_flat, default_mtx, dist, rvecs, tvecs, useExtrinsicGuess=True)
+	#if not success:
+	#	raise RuntimeError('Failed to find pose')
+	#project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
+	fhomog, mask = cv2.findHomography(grid_corners_coord, best_corners_flat)
+	homog = numpy.dot(numpy.linalg.inv(default_mtx), fhomog)
+	chess_grid = numpy.array([[[float(x), float(y)] for y in xrange(9) for x in xrange(9)]])
+	project_grid_points_result = cv2.perspectiveTransform(chess_grid, fhomog)
+
+
+
 	project_grid_points = project_grid_points_result.reshape(9, 9, 2)
 	pimg = numpy.copy(color3)
 	square = numpy.int32([[
@@ -1303,8 +1318,8 @@ def main():
 			cv2.fillPoly(pimg, square, (0, 0, 0))
 	#for bp in project_grid_points.reshape(project_grid_points.shape[0] * project_grid_points.shape[1], project_grid_points.shape[2]):
 	#	cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 5, (0, 255, 0))
-	#cv2.imshow(WINNAME, pimg)
-	#key = cv2.waitKey(0)
+	cv2.imshow(WINNAME, pimg)
+	key = cv2.waitKey(0)
 
 
 def filter_quads(contours):
