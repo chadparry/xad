@@ -1241,8 +1241,11 @@ def main():
 	# TODO: Calculate the scores only for the relevant grid points
 	# TODO: Also make sure the calculation has subpixel accuracy
 	img1f = img1.astype('float')
-	corner_likelihood = cv2.log(cv2.Scharr(img1f, -1, 1, 0)**2 + cv2.Scharr(img1f, -1, 0, 1)**2)
-	default_corner_likelihood = 0
+	#corner_likelihood = cv2.log(cv2.Scharr(img1f, -1, 1, 0)**2 + cv2.Scharr(img1f, -1, 0, 1)**2)
+	corner_likelihood = cv2.Scharr(img1f, -1, 1, 0)**2 + cv2.Scharr(img1f, -1, 0, 1)**2
+	corner_orientation = cv2.phase(cv2.Scharr(img1f, -1, 1, 0), cv2.Scharr(img1f, -1, 0, 1))
+	#cv2.imshow(WINNAME, numpy.cos(corner_orientation)**2)
+	#key = cv2.waitKey(0)
 
 	pimg = numpy.copy(color3)
 	for cp in project_grid_points_flat:
@@ -1255,24 +1258,48 @@ def main():
 	#cv2.imshow(WINNAME, corner_likelihood*10000000)
 	#key = cv2.waitKey(0)
 
+	default_corner_likelihood = 0
 	corner_scores = [[corner_likelihood.item(y, x)
 		if x >= 0 and y >= 0 and x < corner_likelihood.shape[1] and y < corner_likelihood.shape[0]
 		else default_corner_likelihood
 			for (x, y) in ((int(round(cp[0])), int(round(cp[1]))) for cp in corners_row)]
 			for corners_row in corners]
-	board_scores = rolling_sum(corner_scores)
-	board_max_flat_idx = board_scores.argmax()
-	board_max_idx = numpy.unravel_index(board_max_flat_idx, board_scores.shape[:2])
+	debugimg = numpy.array([[(cell / 10, cell / 10, cell / 10) for cell in row] for row in corner_orientation])
+	edge_scores = [[get_edge_likelihood((x, y), corners, corner_likelihood, corner_orientation, debugimg) for x in xrange(corners.shape[1] * 2 - 1)] for y in xrange(corners.shape[0] * 2 - 1)]
+	#print('edges', numpy.array_str(numpy.array(edge_scores)))
+	#board_scores = rolling_sum(corner_scores)
+	#board_max_flat_idx = board_scores.argmax()
+	#board_max_idx = numpy.unravel_index(board_max_flat_idx, board_scores.shape[:2])
+	max_edge_scores = rolling_sum(edge_scores, 17)
+	#print('max', numpy.array_str(max_edge_scores))
+	aligned_max_edge_scores = max_edge_scores[::2,::2]
+	board_max_flat_idx = aligned_max_edge_scores.argmax()
+	board_max_idx = numpy.unravel_index(board_max_flat_idx, aligned_max_edge_scores.shape[:2])
+	top_score = aligned_max_edge_scores.item(board_max_idx)
+	contenders = list(itertools.takewhile(lambda x: x >= top_score*0.98, reversed(sorted([cell for row in aligned_max_edge_scores for cell in row]))))
+	print('top board positions', (contenders[0] - contenders[1]) / contenders[0] * 144 / 17, contenders)
 	best_corners = corners[board_max_idx[0]:board_max_idx[0]+9, board_max_idx[1]:board_max_idx[1]+9]
+	#cv2.imshow(WINNAME, debugimg)
+	#key = cv2.waitKey(0)
 
 	#pimg = cv2.cvtColor(numpy.int32(corner_likelihood*10000000), cv2.COLOR_GRAY2BGR)
 	#pimg = numpy.copy(color3)
 	#pimg[corner_likelihood>0.01*corner_likelihood.max()]=[255,255,255]
 	scaled_corner_likelihood = corner_likelihood / corner_likelihood.max()
 	color_corner_likelihood = [[(c, c, c) for c in row] for row in scaled_corner_likelihood]
-	pimg = numpy.copy(color_corner_likelihood)
-	for cp in project_grid_points_flat:
-		cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 4, (0, 255, 0))
+	#pimg = numpy.array([[tuple(reversed(colorsys.hls_to_rgb(cell, 0.5, 1.))) for cell in row] for row in corner_orientation])
+	pimg = numpy.copy(debugimg)
+	for y in xrange(project_grid_points.shape[0]):
+		for x in xrange(project_grid_points.shape[1]):
+			cp = project_grid_points[y][x]
+			grid_color = (0, 1., 0)
+			try:
+				score = aligned_max_edge_scores[y][x]
+				if score >= top_score*0.98:
+					grid_color = (0, 0, 1.)
+			except IndexError:
+				pass
+			cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 4, grid_color)
 	for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
 		cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 4, (0, 255, 255))
 	#for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
@@ -1320,6 +1347,75 @@ def main():
 	#	cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 5, (0, 255, 0))
 	cv2.imshow(WINNAME, pimg)
 	key = cv2.waitKey(0)
+
+
+def get_edge_likelihood(point, corners, corner_likelihood, corner_orientation, debugimg):
+	"""Return the strength of a candidate edge according to the image of edges
+
+	The resulting matrix of points forms a matrix where every other element is zero:
+	0 - 0 - 0
+        | 0 | 0 |
+	0 - 0 - 0
+        | 0 | 0 |
+	0 - 0 - 0
+	Even rows contain horizontal edge scores and zero'd corners.
+	Odd ros contain vertical edge scores and zero'd centers.
+	"""
+	(grid_x, grid_y) = point
+	if not (grid_x + grid_y) % 2:
+		return 0
+	if grid_x % 2:
+		# Calculate the horizontal edge
+		(corner_x1_idx, corner_y1_idx) = (grid_x // 2, grid_y // 2)
+		(corner_x2_idx, corner_y2_idx) = (corner_x1_idx + 1, corner_y1_idx)
+	else:
+		# Calculate the vertical edge
+		(corner_x1_idx, corner_y1_idx) = (grid_x // 2, grid_y // 2)
+		(corner_x2_idx, corner_y2_idx) = (corner_x1_idx, corner_y1_idx + 1)
+	# TODO: This is probably the least efficient way to iterate over points in a line
+	canvas = numpy.zeros(corner_likelihood.shape).astype('uint8')
+	(corner_x1, corner_y1) = corners[corner_y1_idx][corner_x1_idx]
+	(corner_x2, corner_y2) = corners[corner_y2_idx][corner_x2_idx]
+	target_angle = math.atan2(corner_y2 - corner_y1, corner_x2 - corner_x1) + math.pi/2
+	cv2.line(canvas, (corner_x1, corner_y1), (corner_x2, corner_y2), 255, lineType=cv2.LINE_AA)
+	filtered = canvas.astype('float32') * corner_likelihood
+	mean = numpy.sum(filtered) / numpy.linalg.norm([corner_x2 - corner_x1, corner_y2 - corner_y1])
+	pixels = []
+	total_weight = 0
+	for y in xrange(int(min(corner_y1, corner_y2)), int(max(corner_y1, corner_y2)) + 1):
+		for x in xrange(int(min(corner_x1, corner_x2)), int(max(corner_x1, corner_x2)) + 1):
+			try:
+				weight = canvas.item(y, x) / 256.
+				total_weight += weight
+				#score = filtered.item(y, x)
+				item = corner_orientation.item(y, x)
+			except IndexError:
+				continue
+			if not weight:
+				continue
+			match = math.cos(item - target_angle)**2
+			score = match * weight
+			#print('  pixel', item, target_angle, match, debugimg[y][x], '->', [0., 0., match])
+			pixels.append(score)
+			try:
+				#debugimg[y][x] = list(reversed(colorsys.hls_to_rgb(match, 0.5, 1.)))
+				debugimg[y][x] = [match, match, match]
+			except IndexError:
+				pass
+	#score = numpy.percentile(pixels, 25) if pixels else 0
+	score = sum(pixels) / (total_weight if total_weight else 1)
+	#print('pixels', sorted(pixels))
+	print('score', score, ':', (corner_x1_idx, corner_y1_idx), '->', (corner_x2_idx, corner_y2_idx))
+	scoreimg = numpy.copy(color_global)
+	#width = int(round(score / 500.))
+	#if width > 0:
+	#	#cv2.line(debugimg, (corner_x1, corner_y1), (corner_x2, corner_y2), 255, width)
+	#	cv2.line(scoreimg, (corner_x1, corner_y1), (corner_x2, corner_y2), (0, 0, 255))
+	#if score > 0:
+	#	cv2.line(scoreimg, (corner_x1, corner_y1), (corner_x2, corner_y2), (0, 0, 255))
+	#	cv2.imshow(WINNAME, scoreimg)
+	#	key = cv2.waitKey(0)
+	return score
 
 
 def filter_quads(contours):
@@ -1394,6 +1490,7 @@ def dilate_contours(contours, kernel):
 		good.append(dilated_contour_array)
 	return good
 
+
 def is_complementary_corner(left_idx, right_idx, quads, color2):
 	"""Tests whether the segments emanating from two quads' shared corner are collinear"""
 	left_quad = quads[left_idx//4]
@@ -1436,8 +1533,9 @@ def get_collinear_score(left_segment, right_segment):
 	return normalized
 
 
-def rolling_sum(a, n=9) :
-	return scipy.signal.convolve2d(numpy.array(a), numpy.ones((n, n), dtype=int), 'valid')
+def rolling_sum(a, n=9):
+	na = numpy.array(a)
+	return scipy.signal.convolve2d(na, numpy.ones((n, n), dtype=float), 'valid')
 
 
 def euclidean_distance (p1, p2):
