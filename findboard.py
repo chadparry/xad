@@ -428,469 +428,124 @@ def main():
 					print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
 			return rotated
 
-	if True:
-		if len(quads) < 3:
-			raise RuntimeError('Not enough quads found')
+	if len(quads) < 3:
+		raise RuntimeError('Not enough quads found')
 
-		# RANSACRegressor expects the input to be an array of points.
-		# This target data is an array of quads instead, where each quad
-		# contains 4 points. The translation is done by passing all 4 2-D
-		# points as if they were a single 8-dimensional point.
-		quads_rot = [numpy.concatenate([quad[1:], quad[:1]]) for quad in quads]
-		target_pts = [[dim for corner in quad for dim in corner] for quad in quads + quads_rot]
-		dark_square = (0., 0., 0., 1., 1., 1., 1., 0.)
-		light_square = (1., 0., 1., 1., 2., 1., 2., 0.)
-		training_pts = [(0,) for i in range(len(target_pts))]
+	# RANSACRegressor expects the input to be an array of points.
+	# This target data is an array of quads instead, where each quad
+	# contains 4 points. The translation is done by passing all 4 2-D
+	# points as if they were a single 8-dimensional point.
+	quads_rot = [numpy.concatenate([quad[1:], quad[:1]]) for quad in quads]
+	target_pts = [[dim for corner in quad for dim in corner] for quad in quads + quads_rot]
+	dark_square = (0., 0., 0., 1., 1., 1., 1., 0.)
+	light_square = (1., 0., 1., 1., 2., 1., 2., 0.)
+	training_pts = [(0,) for i in range(len(target_pts))]
 
-		threshold = sum((dim/16.)**2 for dim in color3.shape[0:2])
-		#print('thresh', threshold)
-		visible_squares_estimate = 8 * 8 / 4
-		success_rate = 0.999999
-		retries = int(math.ceil(math.log(1 - success_rate,
-			max(0.5, 1 - visible_squares_estimate / float(len(target_pts))))))
-		while retries > 0:
-			regressor = sklearn.linear_model.RANSACRegressor(
-				base_estimator=ChessboardPerspectiveEstimator(tol=math.pi/360., shape=color3.shape),
-				min_samples=3,
-				residual_metric=lambda dy: numpy.sum(dy**2, axis=1),
-				# FIXME: Each segment has only 3 degrees of allowed error on average.
-				residual_threshold=(math.pi/120.)**2,
-				#residual_threshold=threshold,
-				max_trials=retries,
-			)
-			#regressor.get_params()['base_estimator'].set_params(tol=math.pi/360., shape=color3.shape)
+	threshold = sum((dim/16.)**2 for dim in color3.shape[0:2])
+	#print('thresh', threshold)
+	visible_squares_estimate = 8 * 8 / 4
+	success_rate = 0.999999
+	retries = int(math.ceil(math.log(1 - success_rate,
+		max(0.5, 1 - visible_squares_estimate / float(len(target_pts))))))
+	while retries > 0:
+		regressor = sklearn.linear_model.RANSACRegressor(
+			base_estimator=ChessboardPerspectiveEstimator(tol=math.pi/360., shape=color3.shape),
+			min_samples=3,
+			residual_metric=lambda dy: numpy.sum(dy**2, axis=1),
+			# FIXME: Each segment has only 3 degrees of allowed error on average.
+			residual_threshold=(math.pi/120.)**2,
+			#residual_threshold=threshold,
+			max_trials=retries,
+		)
+		#regressor.get_params()['base_estimator'].set_params(tol=math.pi/360., shape=color3.shape)
+		try:
+			regressor.fit(target_pts, training_pts)
+			break
+		except ValueError as e:
+			#print('Failed regression', e)
 			try:
-				regressor.fit(target_pts, training_pts)
-				break
-			except ValueError as e:
-				#print('Failed regression', e)
-				try:
-					retries -= regressor.n_trials_
-				except AttributeError:
-					retries = 0
-				if retries <= 0:
-					raise
-		vps = regressor.estimator_.vps
-		if vps is None:
-			raise RuntimeError('Inliers not found')
+				retries -= regressor.n_trials_
+			except AttributeError:
+				retries = 0
+			if retries <= 0:
+				raise
+	vps = regressor.estimator_.vps
+	if vps is None:
+		raise RuntimeError('Inliers not found')
 
-		print('retries', retries, regressor.n_trials_)
-		(vp1, vp2) = vps
+	print('retries', retries, regressor.n_trials_)
+	(vp1, vp2) = vps
+	working = numpy.copy(color3)
+	left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
+	right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
+	# FIXME: Use itertools.compress
+	inlier_quads = [quad for (quad, mask) in zip(quads + quads_rot, regressor.inlier_mask_) if mask]
+	#print('vps', tuple(vp1), tuple(vp2))
+	#print('quads', inlier_quads)
+	try:
+		cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
+		cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+		#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+		#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+		cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+		#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+		#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+		cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
+		for quad in inlier_quads:
+			for point in quad:
+				for vp in [vp1, vp2]:
+					cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
+	except OverflowError:
+		pass
+
+	inlier_indices = [idx % len(quads) for (idx, mask) in enumerate(regressor.inlier_mask_) if mask]
+	# Discard quads that are no longer touching any other inliers
+	filtered_inlier_indices = [idx for idx in inlier_indices
+		if any(right_idx in reverse_connected_map and reverse_connected_map[right_idx] in inlier_indices for right_idx in uniques[connected_map[idx]])]
+	#inlier_quads = [quads[idx] for idx in filtered_inlier_indices]
+	# FIXME: Scanning the quads should not be necessary to filter.
+	inlier_quads = [quad for (idx, quad) in enumerate(quads + quads_rot)
+		if regressor.inlier_mask_[idx] and idx % len(quads) in filtered_inlier_indices]
+	cv2.imshow(WINNAME, working)
+	key = cv2.waitKey(1)
+	if len(inlier_quads) < 3:
+		raise RuntimeError('Not enough quads found')
+
+	# Run it again on the inliers with higher precision
+	# FIXME: Now that the inliers and edge orientations are known, an analytic solution is possible
+	# See http://math.stackexchange.com/questions/61719/finding-the-intersection-point-of-many-lines-in-3d-point-closest-to-all-lines
+	# http://www.mathworks.com/matlabcentral/fileexchange/37192-intersection-point-of-lines-in-3d-space
+	estimator = ChessboardPerspectiveEstimator(tol=math.pi/360000., shape=color3.shape, seed=(vp1, vp2))
+	target_pts = [[dim for corner in quad for dim in corner] for quad in inlier_quads]
+	training_pts = [(0,) for i in range(len(inlier_quads))]
+	estimator.fit(target_pts, training_pts)
+	(vp1, vp2) = estimator.vps
+
+	try:
 		working = numpy.copy(color3)
 		left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
 		right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
-		# FIXME: Use itertools.compress
-		inlier_quads = [quad for (quad, mask) in zip(quads + quads_rot, regressor.inlier_mask_) if mask]
-		#print('vps', tuple(vp1), tuple(vp2))
-		#print('quads', inlier_quads)
-		try:
-			cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
-			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
-			#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-			#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
-			#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-			#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
-			for quad in inlier_quads:
-				for point in quad:
-					for vp in [vp1, vp2]:
-						cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
-		except OverflowError:
-			pass
-
-		inlier_indices = [idx % len(quads) for (idx, mask) in enumerate(regressor.inlier_mask_) if mask]
-		# Discard quads that are no longer touching any other inliers
-		filtered_inlier_indices = [idx for idx in inlier_indices
-			if any(right_idx in reverse_connected_map and reverse_connected_map[right_idx] in inlier_indices for right_idx in uniques[connected_map[idx]])]
-		#inlier_quads = [quads[idx] for idx in filtered_inlier_indices]
-		# FIXME: Scanning the quads should not be necessary to filter.
-		inlier_quads = [quad for (idx, quad) in enumerate(quads + quads_rot)
-			if regressor.inlier_mask_[idx] and idx % len(quads) in filtered_inlier_indices]
-		cv2.imshow(WINNAME, working)
-		key = cv2.waitKey(1)
-		if len(inlier_quads) < 3:
-			raise RuntimeError('Not enough quads found')
-
-		# Run it again on the inliers with higher precision
-		# FIXME: Now that the inliers and edge orientations are known, an analytic solution is possible
-		# See http://math.stackexchange.com/questions/61719/finding-the-intersection-point-of-many-lines-in-3d-point-closest-to-all-lines
-		# http://www.mathworks.com/matlabcentral/fileexchange/37192-intersection-point-of-lines-in-3d-space
-		estimator = ChessboardPerspectiveEstimator(tol=math.pi/360000., shape=color3.shape, seed=(vp1, vp2))
-		target_pts = [[dim for corner in quad for dim in corner] for quad in inlier_quads]
-		training_pts = [(0,) for i in range(len(inlier_quads))]
-		estimator.fit(target_pts, training_pts)
-		(vp1, vp2) = estimator.vps
-
-		try:
-			working = numpy.copy(color3)
-			left_center = (color3.shape[1]//2 - 50, color3.shape[0]//2 - 25)
-			right_center = (color3.shape[1]//2 + 50, color3.shape[0]//2 + 25)
-			#inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]
-			#print('quads', len(inlier_quads))
-			cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
-			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
-			#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-			#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
-			#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-			#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
-			for quad in inlier_quads:
-				for point in quad:
-					for vp in [vp1, vp2]:
-						cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
-		except OverflowError:
-			pass
-		cv2.imshow(WINNAME, working)
-		key = cv2.waitKey(1)
-		inlier_quads = numpy.array(inlier_quads)
-	else:
-
-		# FIXME
-		(vp1, vp2) = (numpy.array([-2.57592725e+04, 9.18570980e+00]), numpy.array([388.15343615, 177.45470323]))
-		inlier_quads = numpy.array(
-
-[[[ 502.        ,  444.        ],
-       [ 579.04672897,  445.07009346],
-       [ 561.        ,  418.        ],
-       [ 491.85106383,  416.93617021]], [[ 351.70042194,  439.99578059],
-       [ 426.39754601,  441.04785276],
-       [ 422.98818898,  414.90944882],
-       [ 354.        ,  417.        ]], [[ 276.9825694 ,  439.04260813],
-       [ 287.21153846,  414.03846154],
-       [ 220.06482107,  411.90681972],
-       [ 201.93357934,  437.9704797 ]], [[ 127.84238806,  438.16477612],
-       [ 152.78499665,  412.08841259],
-       [  84.12182741,  409.90862944],
-       [  52.28699552,  433.78475336]], [[ 561.        ,  418.        ],
-       [ 631.93676815,  419.09133489],
-       [ 610.        ,  396.        ],
-       [ 545.94736842,  396.        ]], [[ 424.        ,  415.        ],
-       [ 492.29139073,  416.06705298],
-       [ 483.        ,  394.        ],
-       [ 420.5       ,  394.        ]], [[ 354.97637795,  414.14173228],
-       [ 358.49714286,  393.01714286],
-       [ 297.04790419,  390.89820359],
-       [ 287.61917808,  410.93424658]], [[ 219.93417722,  413.09620253],
-       [ 235.02828467,  391.03558394],
-       [ 173.04889741,  389.94822627],
-       [ 153.25176678,  410.90989399]], [[ 483. ,  395. ],
-       [ 546. ,  395. ],
-       [ 534. ,  377. ],
-       [ 475.8,  377. ]], [[ 360.        ,  392.        ],
-       [ 421.57405405,  393.06162162],
-       [ 417.95964126,  373.78475336],
-       [ 360.        ,  378.        ]], [[ 296.95166858,  392.10356732],
-       [ 305.38778055,  374.02618454],
-       [ 248.0438247 ,  372.94422311],
-       [ 234.70609756,  389.9195122 ]], [[ 172.89473684,  391.10526316],
-       [ 190.94339623,  373.05660377],
-       [ 133.07238606,  371.94369973],
-       [ 111.31513648,  388.86600496]], [[ 534.        ,  377.        ],
-       [ 592.76923077,  377.        ],
-       [ 578.        ,  361.        ],
-       [ 522.92307692,  361.        ]], [[ 419.        ,  375.        ],
-       [ 476.38461538,  375.        ],
-       [ 469.        ,  359.        ],
-       [ 416.53846154,  359.        ]], [[ 360.98564593,  374.05741627],
-       [ 364.74619289,  359.01522843],
-       [ 312.03030303,  357.93939394],
-       [ 304.51428571,  372.97142857]], [[ 247.95652174,  373.05797101],
-       [ 259.21538462,  358.04615385],
-       [ 206.06122449,  356.93877551],
-       [ 191.05769231,  371.94230769]], [[ 470. ,  360. ],
-       [ 523.1,  360. ],
-       [ 514. ,  347. ],
-       [ 464.8,  347. ]], [[ 310.97126437,  358.06321839],
-       [ 317.35      ,  344.03      ],
-       [ 268.04183267,  342.93426295],
-       [ 259.11641221,  356.95992366]], [[ 205.88593156,  358.12547529],
-       [ 218.67206478,  344.06072874],
-       [ 169.07964602,  342.93362832],
-       [ 153.5785124 ,  355.85123967]], [[ 514.        ,  348.        ],
-       [ 564.66666667,  348.        ],
-       [ 554.        ,  336.        ],
-       [ 506.        ,  336.        ]], [[ 416.        ,  346.        ],
-       [ 465.33333333,  346.        ],
-       [ 459.96930946,  333.93094629],
-       [ 413.25433526,  335.01734104]], [[ 267.94136808,  344.06840391],
-       [ 276.46822742,  334.12040134],
-       [ 230.13953488,  331.86046512],
-       [ 219.06818182,  342.93181818]], [[ 460.        ,  335.        ],
-       [ 506.14285714,  335.        ],
-       [ 499.        ,  325.        ],
-       [ 455.71428571,  325.        ]], [[ 321.93706294,  334.14685315],
-       [ 326.25806452,  324.06451613],
-       [ 283.08540925,  321.85053381],
-       [ 277.33333333,  331.91666667]], [[ 230.93706294,  333.07342657],
-       [ 239.45756458,  323.13284133],
-       [ 197.17197452,  320.84713376],
-       [ 184.71732523,  331.91793313]], [[ 502.08108108,  326.08108108],
-       [ 543.51162791,  324.93023256],
-       [ 535.        ,  315.        ],
-       [ 491.        ,  315.        ]], [[ 413. ,  324. ],
-       [ 456.5,  324. ],
-       [ 452. ,  315. ],
-       [ 410. ,  315. ]], [[ 368.94827586,  324.15517241],
-       [ 371.98230088,  315.05309735],
-       [ 331.07894737,  312.84210526],
-       [ 326.53846154,  321.92307692]], [[ 282.9321267 ,  323.08144796],
-       [ 290.44343891,  314.0678733 ],
-       [ 249.0678733 ,  312.91855204],
-       [ 241.55656109,  321.9321267 ]], [[ 201.96835443,  437.0443038 ],
-       [ 219.11678832,  413.03649635],
-       [ 156.05797101,  411.94927536],
-       [ 128.62893082,  435.94968553]], [[ 492.        ,  416.        ],
-       [ 561.16302521,  418.16134454],
-       [ 546.        ,  396.        ],
-       [ 483.80520733,  394.92767599]], [[ 355.50263158,  412.98421053],
-       [ 422.34513274,  415.10619469],
-       [ 420.        ,  394.        ],
-       [ 359.01714286,  391.89714286]], [[ 287.98130009,  413.04808549],
-       [ 296.15876089,  392.02032914],
-       [ 235.03468208,  390.94797688],
-       [ 221.0212766 ,  411.96808511]], [[ 152.95      ,  411.05      ],
-       [ 172.94545455,  391.05454545],
-       [ 113.07021277,  389.94574468],
-       [  87.20097561,  409.93560976]], [[ 546.        ,  395.        ],
-       [ 607.89830508,  396.10532688],
-       [ 591.        ,  378.        ],
-       [ 533.93506494,  376.9025974 ]], [[ 421.        ,  393.        ],
-       [ 482.02352941,  394.07058824],
-       [ 476.        ,  376.        ],
-       [ 418.59158416,  374.93688119]], [[ 357.98932384,  392.05338078],
-       [ 361.6       ,  374.        ],
-       [ 305.        ,  374.        ],
-       [ 297.72405063,  390.97721519]], [[ 235.        ,  390.        ],
-       [ 247.14285714,  373.        ],
-       [ 191.        ,  373.        ],
-       [ 174.        ,  390.        ]], [[ 480.        ,  376.        ],
-       [ 532.75      ,  376.        ],
-       [ 524.        ,  361.        ],
-       [ 468.85179407,  359.89703588]], [[ 305.  ,  373.  ],
-       [ 311.25,  358.  ],
-       [ 258.  ,  358.  ],
-       [ 248.  ,  373.  ]], [[ 418.51104101,  374.06624606],
-       [ 416.        ,  359.        ],
-       [ 365.02857143,  356.87619048],
-       [ 361.31069364,  372.98699422]], [[ 191.        ,  372.        ],
-       [ 204.93478261,  358.06521739],
-       [ 154.08108108,  356.93513514],
-       [ 135.25      ,  372.        ]], [[ 523.        ,  360.        ],
-       [ 576.13043478,  361.13043478],
-       [ 564.        ,  349.        ],
-       [ 514.92307692,  347.88461538]], [[ 417.        ,  358.        ],
-       [ 469.37383178,  359.0911215 ],
-       [ 464.        ,  347.        ],
-       [ 415.65841584,  345.92574257]], [[ 363.99376299,  358.06237006],
-       [ 365.29933481,  345.00665188],
-       [ 317.02643172,  343.9339207 ],
-       [ 311.80991736,  356.97520661]], [[ 259. ,  357. ],
-       [ 266.8,  344. ],
-       [ 219. ,  344. ],
-       [ 207.3,  357. ]], [[ 465.        ,  346.        ],
-       [ 514.34104046,  347.12138728],
-       [ 506.        ,  336.        ],
-       [ 460.83692308,  334.89846154]], [[ 317.        ,  343.        ],
-       [ 321.48192771,  334.03614458],
-       [ 276.05136986,  332.92808219],
-       [ 268.85714286,  343.        ]], [[ 219.        ,  343.        ],
-       [ 230.42857143,  333.        ],
-       [ 183.        ,  333.        ],
-       [ 171.57142857,  343.        ]], [[ 414.        ,  334.        ],
-       [ 459.        ,  334.        ],
-       [ 456.        ,  325.        ],
-       [ 412.55913978,  323.91397849]], [[ 276.95774648,  333.07394366],
-       [ 282.71428571,  323.        ],
-       [ 240.        ,  323.        ],
-       [ 231.07317073,  331.92682927]], [[ 421.62002153,  393.30678149],
-       [ 418.        ,  374.        ],
-       [ 362.01408451,  372.94366197],
-       [ 358.26556017,  387.93775934]], [[ 578.        ,  444.        ],
-       [ 651.71428571,  444.        ],
-       [ 630.        ,  420.        ],
-       [ 560.94036061,  417.84188627]], [[ 427.        ,  441.        ],
-       [ 501.2521228 ,  442.06074461],
-       [ 491.        ,  417.        ],
-       [ 423.59481583,  414.89358799]], [[ 351.    ,  437.    ],
-       [ 354.45  ,  414.    ],
-       [ 288.    ,  414.    ],
-       [ 277.6875,  438.0625]], [[ 506.        ,  335.        ],
-       [ 551.69343066,  336.14233577],
-       [ 543.        ,  326.        ],
-       [ 500.        ,  326.        ]], [[ 579.04672897,  445.07009346],
-       [ 561.        ,  418.        ],
-       [ 491.85106383,  416.93617021],
-       [ 502.        ,  444.        ]], [[ 426.39754601,  441.04785276],
-       [ 422.98818898,  414.90944882],
-       [ 354.        ,  417.        ],
-       [ 351.70042194,  439.99578059]], [[ 287.21153846,  414.03846154],
-       [ 220.06482107,  411.90681972],
-       [ 201.93357934,  437.9704797 ],
-       [ 276.9825694 ,  439.04260813]], [[ 152.78499665,  412.08841259],
-       [  84.12182741,  409.90862944],
-       [  52.28699552,  433.78475336],
-       [ 127.84238806,  438.16477612]], [[ 631.93676815,  419.09133489],
-       [ 610.        ,  396.        ],
-       [ 545.94736842,  396.        ],
-       [ 561.        ,  418.        ]], [[ 492.29139073,  416.06705298],
-       [ 483.        ,  394.        ],
-       [ 420.5       ,  394.        ],
-       [ 424.        ,  415.        ]], [[ 358.49714286,  393.01714286],
-       [ 297.04790419,  390.89820359],
-       [ 287.61917808,  410.93424658],
-       [ 354.97637795,  414.14173228]], [[ 235.02828467,  391.03558394],
-       [ 173.04889741,  389.94822627],
-       [ 153.25176678,  410.90989399],
-       [ 219.93417722,  413.09620253]], [[ 546. ,  395. ],
-       [ 534. ,  377. ],
-       [ 475.8,  377. ],
-       [ 483. ,  395. ]], [[ 421.57405405,  393.06162162],
-       [ 417.95964126,  373.78475336],
-       [ 360.        ,  378.        ],
-       [ 360.        ,  392.        ]], [[ 305.38778055,  374.02618454],
-       [ 248.0438247 ,  372.94422311],
-       [ 234.70609756,  389.9195122 ],
-       [ 296.95166858,  392.10356732]], [[ 190.94339623,  373.05660377],
-       [ 133.07238606,  371.94369973],
-       [ 111.31513648,  388.86600496],
-       [ 172.89473684,  391.10526316]], [[ 592.76923077,  377.        ],
-       [ 578.        ,  361.        ],
-       [ 522.92307692,  361.        ],
-       [ 534.        ,  377.        ]], [[ 476.38461538,  375.        ],
-       [ 469.        ,  359.        ],
-       [ 416.53846154,  359.        ],
-       [ 419.        ,  375.        ]], [[ 364.74619289,  359.01522843],
-       [ 312.03030303,  357.93939394],
-       [ 304.51428571,  372.97142857],
-       [ 360.98564593,  374.05741627]], [[ 259.21538462,  358.04615385],
-       [ 206.06122449,  356.93877551],
-       [ 191.05769231,  371.94230769],
-       [ 247.95652174,  373.05797101]], [[ 523.1,  360. ],
-       [ 514. ,  347. ],
-       [ 464.8,  347. ],
-       [ 470. ,  360. ]], [[ 317.35      ,  344.03      ],
-       [ 268.04183267,  342.93426295],
-       [ 259.11641221,  356.95992366],
-       [ 310.97126437,  358.06321839]], [[ 218.67206478,  344.06072874],
-       [ 169.07964602,  342.93362832],
-       [ 153.5785124 ,  355.85123967],
-       [ 205.88593156,  358.12547529]], [[ 564.66666667,  348.        ],
-       [ 554.        ,  336.        ],
-       [ 506.        ,  336.        ],
-       [ 514.        ,  348.        ]], [[ 465.33333333,  346.        ],
-       [ 459.96930946,  333.93094629],
-       [ 413.25433526,  335.01734104],
-       [ 416.        ,  346.        ]], [[ 276.46822742,  334.12040134],
-       [ 230.13953488,  331.86046512],
-       [ 219.06818182,  342.93181818],
-       [ 267.94136808,  344.06840391]], [[ 506.14285714,  335.        ],
-       [ 499.        ,  325.        ],
-       [ 455.71428571,  325.        ],
-       [ 460.        ,  335.        ]], [[ 326.25806452,  324.06451613],
-       [ 283.08540925,  321.85053381],
-       [ 277.33333333,  331.91666667],
-       [ 321.93706294,  334.14685315]], [[ 239.45756458,  323.13284133],
-       [ 197.17197452,  320.84713376],
-       [ 184.71732523,  331.91793313],
-       [ 230.93706294,  333.07342657]], [[ 543.51162791,  324.93023256],
-       [ 535.        ,  315.        ],
-       [ 491.        ,  315.        ],
-       [ 502.08108108,  326.08108108]], [[ 456.5,  324. ],
-       [ 452. ,  315. ],
-       [ 410. ,  315. ],
-       [ 413. ,  324. ]], [[ 371.98230088,  315.05309735],
-       [ 331.07894737,  312.84210526],
-       [ 326.53846154,  321.92307692],
-       [ 368.94827586,  324.15517241]], [[ 290.44343891,  314.0678733 ],
-       [ 249.0678733 ,  312.91855204],
-       [ 241.55656109,  321.9321267 ],
-       [ 282.9321267 ,  323.08144796]], [[ 219.11678832,  413.03649635],
-       [ 156.05797101,  411.94927536],
-       [ 128.62893082,  435.94968553],
-       [ 201.96835443,  437.0443038 ]], [[ 561.16302521,  418.16134454],
-       [ 546.        ,  396.        ],
-       [ 483.80520733,  394.92767599],
-       [ 492.        ,  416.        ]], [[ 422.34513274,  415.10619469],
-       [ 420.        ,  394.        ],
-       [ 359.01714286,  391.89714286],
-       [ 355.50263158,  412.98421053]], [[ 296.15876089,  392.02032914],
-       [ 235.03468208,  390.94797688],
-       [ 221.0212766 ,  411.96808511],
-       [ 287.98130009,  413.04808549]], [[ 172.94545455,  391.05454545],
-       [ 113.07021277,  389.94574468],
-       [  87.20097561,  409.93560976],
-       [ 152.95      ,  411.05      ]], [[ 607.89830508,  396.10532688],
-       [ 591.        ,  378.        ],
-       [ 533.93506494,  376.9025974 ],
-       [ 546.        ,  395.        ]], [[ 482.02352941,  394.07058824],
-       [ 476.        ,  376.        ],
-       [ 418.59158416,  374.93688119],
-       [ 421.        ,  393.        ]], [[ 361.6       ,  374.        ],
-       [ 305.        ,  374.        ],
-       [ 297.72405063,  390.97721519],
-       [ 357.98932384,  392.05338078]], [[ 247.14285714,  373.        ],
-       [ 191.        ,  373.        ],
-       [ 174.        ,  390.        ],
-       [ 235.        ,  390.        ]], [[ 532.75      ,  376.        ],
-       [ 524.        ,  361.        ],
-       [ 468.85179407,  359.89703588],
-       [ 480.        ,  376.        ]], [[ 311.25,  358.  ],
-       [ 258.  ,  358.  ],
-       [ 248.  ,  373.  ],
-       [ 305.  ,  373.  ]], [[ 416.        ,  359.        ],
-       [ 365.02857143,  356.87619048],
-       [ 361.31069364,  372.98699422],
-       [ 418.51104101,  374.06624606]], [[ 204.93478261,  358.06521739],
-       [ 154.08108108,  356.93513514],
-       [ 135.25      ,  372.        ],
-       [ 191.        ,  372.        ]], [[ 576.13043478,  361.13043478],
-       [ 564.        ,  349.        ],
-       [ 514.92307692,  347.88461538],
-       [ 523.        ,  360.        ]], [[ 469.37383178,  359.0911215 ],
-       [ 464.        ,  347.        ],
-       [ 415.65841584,  345.92574257],
-       [ 417.        ,  358.        ]], [[ 365.29933481,  345.00665188],
-       [ 317.02643172,  343.9339207 ],
-       [ 311.80991736,  356.97520661],
-       [ 363.99376299,  358.06237006]], [[ 266.8,  344. ],
-       [ 219. ,  344. ],
-       [ 207.3,  357. ],
-       [ 259. ,  357. ]], [[ 514.34104046,  347.12138728],
-       [ 506.        ,  336.        ],
-       [ 460.83692308,  334.89846154],
-       [ 465.        ,  346.        ]], [[ 321.48192771,  334.03614458],
-       [ 276.05136986,  332.92808219],
-       [ 268.85714286,  343.        ],
-       [ 317.        ,  343.        ]], [[ 230.42857143,  333.        ],
-       [ 183.        ,  333.        ],
-       [ 171.57142857,  343.        ],
-       [ 219.        ,  343.        ]], [[ 459.        ,  334.        ],
-       [ 456.        ,  325.        ],
-       [ 412.55913978,  323.91397849],
-       [ 414.        ,  334.        ]], [[ 282.71428571,  323.        ],
-       [ 240.        ,  323.        ],
-       [ 231.07317073,  331.92682927],
-       [ 276.95774648,  333.07394366]], [[ 418.        ,  374.        ],
-       [ 362.01408451,  372.94366197],
-       [ 358.26556017,  387.93775934],
-       [ 421.62002153,  393.30678149]], [[ 651.71428571,  444.        ],
-       [ 630.        ,  420.        ],
-       [ 560.94036061,  417.84188627],
-       [ 578.        ,  444.        ]], [[ 501.2521228 ,  442.06074461],
-       [ 491.        ,  417.        ],
-       [ 423.59481583,  414.89358799],
-       [ 427.        ,  441.        ]], [[ 354.45  ,  414.    ],
-       [ 288.    ,  414.    ],
-       [ 277.6875,  438.0625],
-       [ 351.    ,  437.    ]], [[ 551.69343066,  336.14233577],
-       [ 543.        ,  326.        ],
-       [ 500.        ,  326.        ],
-       [ 506.        ,  335.        ]]]
-		)
+		#inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]
+		#print('quads', len(inlier_quads))
+		cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
+		cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+		#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+		#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
+		cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+		#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+		#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
+		cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
+		for quad in inlier_quads:
+			for point in quad:
+				for vp in [vp1, vp2]:
+					cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
+	except OverflowError:
+		pass
+	cv2.imshow(WINNAME, working)
+	key = cv2.waitKey(1)
 
 
+	inlier_quads = numpy.array(inlier_quads)
 	# Calculate the camera parameters
 	# See https://fedcsis.org/proceedings/2012/pliks/110.pdf
 	horizon = vp2 - vp1
@@ -1051,161 +706,142 @@ def main():
 		dup_idx = sp[0]
 		unique_filter[dup_idx] = False
 
-	# Perform several iterations to refine the pose
-	last_inlier_count = 0
-	prev_outlier_snap_filter = set()
-	while True:
 
-		x_values = (x for quad in filtered_quads for (x, y) in quad)
-		y_values = (y for quad in filtered_quads for (x, y) in quad)
-		# Plot the points on a unit circle, where it wraps around again every avg_side
-		x_radians = [x * 2*math.pi / avg_x_side for x in x_values]
-		y_radians = [y * 2*math.pi / avg_y_side for y in y_values]
-		# Now average all the vectors on the unit circle to find an average that is robust against wrapping
-		offset_angle_x = math.atan2(
-			sum(math.sin(angle) for angle in x_radians),
-			sum(math.cos(angle) for angle in x_radians))
-		offset_angle_y = math.atan2(
-			sum(math.sin(angle) for angle in y_radians),
-			sum(math.cos(angle) for angle in y_radians))
-		# Use that to get the average offset
-		avg_x_offset = offset_angle_x / (2*math.pi)
-		avg_y_offset = offset_angle_y / (2*math.pi)
-		# Shift all the quads so they should now lie on an integral grid
-		transformed_quads = [[(x / avg_x_side - avg_x_offset, y / avg_y_side - avg_y_offset) for (x, y) in quad] for quad in filtered_quads]
-		#print("TRANSFORMED", transformed_quads)
-		# Snap all points to the nearest grid position
-		snapped_quads = [[(int(round(x)), int(round(y))) for (x, y) in quad] for quad in transformed_quads]
-		all_snapped_pts = [p for quad in snapped_quads for p in quad]
-		all_transformed_pts = (p for quad in transformed_quads for p in quad)
-		snap_distance = (numpy.linalg.norm([sp[0] - tp[0], sp[1] - tp[1]]) for (sp, tp) in zip(all_snapped_pts, all_transformed_pts))
-		#outlier_snap_filter = [d < 1/8. for d in snap_distance]
-		outlier_snap_filter_pre = identify_outliers(numpy.array(list(snap_distance)))
-		#outlier_snap_filter = [all(f) for f in zip(outlier_snap_filter_pre, unique_filter)]
-		outlier_snap_filter = outlier_snap_filter_pre
-		#snapped_pts = list(itertools.compress(all_snapped_pts, outlier_snap_filter))
-		#transformed_pts = list(itertools.compress((p for quad in transformed_quads for p in quad), outlier_snap_filter))
-		snapped_pts = numpy.array(all_snapped_pts)[outlier_snap_filter]
-		transformed_pts = numpy.array([p for quad in transformed_quads for p in quad])[outlier_snap_filter]
-		inlier_count = len(snapped_pts)
+	x_values = (x for quad in filtered_quads for (x, y) in quad)
+	y_values = (y for quad in filtered_quads for (x, y) in quad)
+	# Plot the points on a unit circle, where it wraps around again every avg_side
+	x_radians = [x * 2*math.pi / avg_x_side for x in x_values]
+	y_radians = [y * 2*math.pi / avg_y_side for y in y_values]
+	# Now average all the vectors on the unit circle to find an average that is robust against wrapping
+	offset_angle_x = math.atan2(
+		sum(math.sin(angle) for angle in x_radians),
+		sum(math.cos(angle) for angle in x_radians))
+	offset_angle_y = math.atan2(
+		sum(math.sin(angle) for angle in y_radians),
+		sum(math.cos(angle) for angle in y_radians))
+	# Use that to get the average offset
+	avg_x_offset = offset_angle_x / (2*math.pi)
+	avg_y_offset = offset_angle_y / (2*math.pi)
+	# Shift all the quads so they should now lie on an integral grid
+	transformed_quads = [[(x / avg_x_side - avg_x_offset, y / avg_y_side - avg_y_offset) for (x, y) in quad] for quad in filtered_quads]
+	#print("TRANSFORMED", transformed_quads)
+	# Snap all points to the nearest grid position
+	snapped_quads = [[(int(round(x)), int(round(y))) for (x, y) in quad] for quad in transformed_quads]
+	all_snapped_pts = [p for quad in snapped_quads for p in quad]
+	all_transformed_pts = (p for quad in transformed_quads for p in quad)
+	snap_distance = (numpy.linalg.norm([sp[0] - tp[0], sp[1] - tp[1]]) for (sp, tp) in zip(all_snapped_pts, all_transformed_pts))
+	#outlier_snap_filter = [d < 1/8. for d in snap_distance]
+	outlier_snap_filter_pre = identify_outliers(numpy.array(list(snap_distance)))
+	#outlier_snap_filter = [all(f) for f in zip(outlier_snap_filter_pre, unique_filter)]
+	outlier_snap_filter = outlier_snap_filter_pre
+	#snapped_pts = list(itertools.compress(all_snapped_pts, outlier_snap_filter))
+	#transformed_pts = list(itertools.compress((p for quad in transformed_quads for p in quad), outlier_snap_filter))
+	snapped_pts = numpy.array(all_snapped_pts)[outlier_snap_filter]
+	transformed_pts = numpy.array([p for quad in transformed_quads for p in quad])[outlier_snap_filter]
+	inlier_count = len(snapped_pts)
 
-		# Match the snapped points with their original image locations
-		unprojected_pts = unprojected_pts_with_outliers[outlier_snap_filter]
-		snapped_pts_coord = numpy.array([[float(x), float(y), 0.] for (x, y) in snapped_pts])
+	# Match the snapped points with their original image locations
+	unprojected_pts = unprojected_pts_with_outliers[outlier_snap_filter]
+	snapped_pts_coord = numpy.array([[float(x), float(y), 0.] for (x, y) in snapped_pts])
 
-		#print('sorted snapped', sorted([tuple(p) for p in snapped_pts]))
-		#print('snapped', [[tuple(p) for p in quad] for quad in snapped_quads])
-		#print('unprojected', unprojected_pts)
-		print('inlier_count', last_inlier_count, '->', inlier_count, 'uniq', len(set(tuple(p) for p in snapped_pts)))
+	#print('sorted snapped', sorted([tuple(p) for p in snapped_pts]))
+	#print('snapped', [[tuple(p) for p in quad] for quad in snapped_quads])
+	#print('unprojected', unprojected_pts)
 
-		(h, w, _) = color3.shape
-		f = max(h, w)
-		fx = fy = f
-		default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
-		#success, rvecs, tvecs = cv2.solvePnP(snapped_pts_coord, unprojected_pts, default_mtx, dist, rvecs, tvecs, useExtrinsicGuess=(last_inlier_count != 0))
-		#if not success:
-		#	raise RuntimeError('Failed to find pose')
+	(h, w, _) = color3.shape
+	f = max(h, w)
+	fx = fy = f
+	default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
 
-		#print('before', r, tvec)
-		newr, newj = cv2.Rodrigues(rvecs)
-		#print('pose', rvecs, tvecs)
-		#print('pose rodrigues', newr, tvecs)
-		#print('homography', numpy.concatenate([newr, tvecs], axis=1))
-		#cameraMatrix, rotMatrix, transVect, rotMatrixX, rotMatrixY, rotMatrixZ, eulerAngles = cv2.decomposeProjectionMatrix(numpy.concatenate([newr, tvecs], axis=1))
-		#print('decomposed', cameraMatrix, rotMatrix, transVect)
+	#print('before', r, tvec)
+	newr, newj = cv2.Rodrigues(rvecs)
+	#print('pose', rvecs, tvecs)
+	#print('pose rodrigues', newr, tvecs)
+	#print('homography', numpy.concatenate([newr, tvecs], axis=1))
+	#cameraMatrix, rotMatrix, transVect, rotMatrixX, rotMatrixY, rotMatrixZ, eulerAngles = cv2.decomposeProjectionMatrix(numpy.concatenate([newr, tvecs], axis=1))
+	#print('decomposed', cameraMatrix, rotMatrix, transVect)
 
 
-		projm = numpy.concatenate([newr, tvecs], axis=1)
-		homog = numpy.concatenate([numpy.delete(newr, 2, 1), tvecs], axis=1)
-		r = homog
-		#r = numpy.linalg.inv(homog)
-		#tvec = r[:,2:]
-		#print('trying', homog)
+	projm = numpy.concatenate([newr, tvecs], axis=1)
+	homog = numpy.concatenate([numpy.delete(newr, 2, 1), tvecs], axis=1)
+	r = homog
+	#r = numpy.linalg.inv(homog)
+	#tvec = r[:,2:]
+	#print('trying', homog)
 
 
 
-		min_snapped_x = min(x for (x, y) in snapped_pts) - 8
-		min_snapped_y = min(y for (x, y) in snapped_pts) - 8
-		#homog_src_pts = numpy.array([(float((x-min_snapped_x-7)*100), float((y-min_snapped_y-7)*100)) for (x, y) in snapped_pts])
-		homog_src_pts = numpy.array([(float(x), float(y)) for (x, y) in snapped_pts])
-		#print('pnp r', r)
-		#print('snapped', homog_src_pts)
-		#print('unprojected', unprojected_pts)
-		fhomog, mask = cv2.findHomography(homog_src_pts, unprojected_pts)
-		homog = numpy.dot(numpy.linalg.inv(default_mtx), fhomog)
-		r = homog
-		#print('homog r', r)
-		#print('round trip', numpy.linalg.inv(fhomog), numpy.linalg.inv(numpy.dot(default_mtx, warp_h)))
+	min_snapped_x = min(x for (x, y) in snapped_pts) - 8
+	min_snapped_y = min(y for (x, y) in snapped_pts) - 8
+	#homog_src_pts = numpy.array([(float((x-min_snapped_x-7)*100), float((y-min_snapped_y-7)*100)) for (x, y) in snapped_pts])
+	homog_src_pts = numpy.array([(float(x), float(y)) for (x, y) in snapped_pts])
+	#print('pnp r', r)
+	#print('snapped', homog_src_pts)
+	#print('unprojected', unprojected_pts)
+	fhomog, mask = cv2.findHomography(homog_src_pts, unprojected_pts)
+	homog = numpy.dot(numpy.linalg.inv(default_mtx), fhomog)
+	r = homog
+	#print('homog r', r)
+	#print('round trip', numpy.linalg.inv(fhomog), numpy.linalg.inv(numpy.dot(default_mtx, warp_h)))
 
 
-		rimg = numpy.copy(refimg)
-		warp_trans = numpy.array([[1., 0, float(min_snapped_x + 7)], [0., 1., float(min_snapped_y + 7)], [0., 0., 1.]])
-		warp_scale = numpy.array([[1/100., 0, 0.], [0., 1/100., 0.], [0., 0., 1.]])
-		warp_h = numpy.dot(numpy.dot(homog, warp_trans), warp_scale)
-		warp_m = numpy.linalg.inv(numpy.dot(default_mtx, warp_h))
-		rimg = cv2.warpPerspective(color3, warp_m, refimg.shape[:2])
-		for g in xrange(9):
-			cv2.line(rimg, (0, g * 100), (800, g * 100), (0, 0, 0))
-			cv2.line(rimg, (g * 100, 0), (g * 100, 800), (0, 0, 0))
-		for quad in [[(x / avg_x_side - avg_x_offset, y / avg_y_side - avg_y_offset) for (x, y) in quad] for quad in filtered_quads]:
-			for bp in quad:
-				cv2.circle(rimg, (int(round((bp[0]-min_snapped_x-7)*100)), int(round((bp[1]-min_snapped_y-7)*100))), 4, (255, 0, 0), -1)
+	rimg = numpy.copy(refimg)
+	warp_trans = numpy.array([[1., 0, float(min_snapped_x + 7)], [0., 1., float(min_snapped_y + 7)], [0., 0., 1.]])
+	warp_scale = numpy.array([[1/100., 0, 0.], [0., 1/100., 0.], [0., 0., 1.]])
+	warp_h = numpy.dot(numpy.dot(homog, warp_trans), warp_scale)
+	warp_m = numpy.linalg.inv(numpy.dot(default_mtx, warp_h))
+	rimg = cv2.warpPerspective(color3, warp_m, refimg.shape[:2])
+	for g in xrange(9):
+		cv2.line(rimg, (0, g * 100), (800, g * 100), (0, 0, 0))
+		cv2.line(rimg, (g * 100, 0), (g * 100, 800), (0, 0, 0))
+	for quad in [[(x / avg_x_side - avg_x_offset, y / avg_y_side - avg_y_offset) for (x, y) in quad] for quad in filtered_quads]:
+		for bp in quad:
+			cv2.circle(rimg, (int(round((bp[0]-min_snapped_x-7)*100)), int(round((bp[1]-min_snapped_y-7)*100))), 4, (255, 0, 0), -1)
 
-		apff = list(itertools.compress((p for quad in transformed_quads for p in quad), outlier_snap_filter))
+	apff = list(itertools.compress((p for quad in transformed_quads for p in quad), outlier_snap_filter))
 
-		for bp in apff:
-			cv2.circle(rimg, (int(round((bp[0]-min_snapped_x-7)*100)), int(round((bp[1]-min_snapped_y-7)*100))), 4, (0, 0, 255), -1)
-		#cv2.imshow(WINNAME, rimg)
-		#key = cv2.waitKey(0)
+	for bp in apff:
+		cv2.circle(rimg, (int(round((bp[0]-min_snapped_x-7)*100)), int(round((bp[1]-min_snapped_y-7)*100))), 4, (0, 0, 255), -1)
+	#cv2.imshow(WINNAME, rimg)
+	#key = cv2.waitKey(0)
 
 
-		bg = numpy.copy(color3)
-		max_snapped_x = max(x for (x, y) in snapped_pts) + 7
-		max_snapped_y = max(y for (x, y) in snapped_pts) + 7
-		grid_corners = [[(x, y)
-			for x in range(min_snapped_x, max_snapped_x + 1)]
-			for y in range(min_snapped_y, max_snapped_y + 1)]
-		grid_corners_coord = numpy.array([[float(x), float(y), 0.] for row_corners in grid_corners for (x, y) in row_corners])
-		project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
-		#print('GRID', min_snapped_x, max_snapped_x, min_snapped_y, max_snapped_y)
-		project_grid_points_flat = project_grid_points_result.reshape(project_grid_points_result.shape[0], 2)
-		project_grid_points = project_grid_points_result.reshape(max_snapped_y + 1 - min_snapped_y, max_snapped_x + 1 - min_snapped_x, 2)
-		for cu in project_grid_points_flat:
-			cv2.circle(bg, (int(round(cu[0])), int(round(cu[1]))), 3, (0, 255, 0))
-		for quad in inlier_quads:
-			for cu in quad:
-				cv2.circle(bg, (int(round(cu[0])), int(round(cu[1]))), 2, (255, 0, 0))
-		for cu in unprojected_pts:
-			cv2.circle(bg, (int(round(cu[0])), int(round(cu[1]))), 3, (0, 0, 255))
-		for bp in apff:
-			ubp = numpy.dot(numpy.dot(default_mtx, projm), numpy.array([bp[0], bp[1], 0., 1.]).reshape(4,1))
-			nubp = [ubp[0][0] / ubp[2][0], ubp[1][0] / ubp[2][0]]
-			#cv2.circle(bg, (int(round(nubp[0])), int(round(nubp[1]))), 3, (0, 0, 255))
+	bg = numpy.copy(color3)
+	max_snapped_x = max(x for (x, y) in snapped_pts) + 7
+	max_snapped_y = max(y for (x, y) in snapped_pts) + 7
+	grid_corners = [[(x, y)
+		for x in range(min_snapped_x, max_snapped_x + 1)]
+		for y in range(min_snapped_y, max_snapped_y + 1)]
+	grid_corners_coord = numpy.array([[float(x), float(y), 0.] for row_corners in grid_corners for (x, y) in row_corners])
+	project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
+	#print('GRID', min_snapped_x, max_snapped_x, min_snapped_y, max_snapped_y)
+	project_grid_points_flat = project_grid_points_result.reshape(project_grid_points_result.shape[0], 2)
+	project_grid_points = project_grid_points_result.reshape(max_snapped_y + 1 - min_snapped_y, max_snapped_x + 1 - min_snapped_x, 2)
+	for cu in project_grid_points_flat:
+		cv2.circle(bg, (int(round(cu[0])), int(round(cu[1]))), 3, (0, 255, 0))
+	for quad in inlier_quads:
+		for cu in quad:
+			cv2.circle(bg, (int(round(cu[0])), int(round(cu[1]))), 2, (255, 0, 0))
+	for cu in unprojected_pts:
+		cv2.circle(bg, (int(round(cu[0])), int(round(cu[1]))), 3, (0, 0, 255))
+	for bp in apff:
+		ubp = numpy.dot(numpy.dot(default_mtx, projm), numpy.array([bp[0], bp[1], 0., 1.]).reshape(4,1))
+		nubp = [ubp[0][0] / ubp[2][0], ubp[1][0] / ubp[2][0]]
+		#cv2.circle(bg, (int(round(nubp[0])), int(round(nubp[1]))), 3, (0, 0, 255))
 
-		#cv2.imshow(WINNAME, bg)
-		#key = cv2.waitKey(0)
-
-		hashable_outlier_snap_filter = tuple(outlier_snap_filter)
-		if hashable_outlier_snap_filter in prev_outlier_snap_filter:
-			break
-		last_inlier_count = inlier_count
-		prev_outlier_snap_filter.add(hashable_outlier_snap_filter)
+	#cv2.imshow(WINNAME, bg)
+	#key = cv2.waitKey(0)
 
 
 
+	filtered_quads = []
+	for quad in unprojected_quads:
+		quadpts = numpy.array([reverse_project([pt[0], pt[1], 1.]) for pt in quad])
+		filtered_quads.append(quadpts)
 
+	avg_x_side = 1.
+	avg_y_side = 1.
 
-		filtered_quads = []
-		for quad in unprojected_quads:
-			quadpts = numpy.array([reverse_project([pt[0], pt[1], 1.]) for pt in quad])
-			filtered_quads.append(quadpts)
-
-		avg_x_side = 1.
-		avg_y_side = 1.
-
-
-
-		break
 
 	min_snapped_x = min(x for (x, y) in snapped_pts) - 7
 	min_snapped_y = min(y for (x, y) in snapped_pts) - 7
@@ -1273,11 +909,8 @@ def main():
 			for (x, y) in ((int(round(cp[0])), int(round(cp[1]))) for cp in corners_row)]
 			for corners_row in corners]
 	debugimg = numpy.array([[(cell / 10, cell / 10, cell / 10) for cell in row] for row in corner_orientation])
-	edge_scores = [[get_edge_likelihood((x, y), corners, corner_likelihood, corner_orientation, debugimg) for x in xrange(corners.shape[1] * 2 - 1)] for y in xrange(corners.shape[0] * 2 - 1)]
+	edge_scores = [[get_edge_likelihood((x, y), corners, corner_orientation) for x in xrange(corners.shape[1] * 2 - 1)] for y in xrange(corners.shape[0] * 2 - 1)]
 	#print('edges', numpy.array_str(numpy.array(edge_scores)))
-	#board_scores = rolling_sum(corner_scores)
-	#board_max_flat_idx = board_scores.argmax()
-	#board_max_idx = numpy.unravel_index(board_max_flat_idx, board_scores.shape[:2])
 	max_edge_scores = rolling_sum(edge_scores, 17)
 	#print('max', numpy.array_str(max_edge_scores))
 	aligned_max_edge_scores = max_edge_scores[::2,::2]
@@ -1293,11 +926,6 @@ def main():
 	#cv2.imshow(WINNAME, debugimg)
 	#key = cv2.waitKey(0)
 
-	#pimg = cv2.cvtColor(numpy.int32(corner_likelihood*10000000), cv2.COLOR_GRAY2BGR)
-	#pimg = numpy.copy(color3)
-	#pimg[corner_likelihood>0.01*corner_likelihood.max()]=[255,255,255]
-	scaled_corner_likelihood = corner_likelihood / corner_likelihood.max()
-	color_corner_likelihood = [[(c, c, c) for c in row] for row in scaled_corner_likelihood]
 	#pimg = numpy.array([[tuple(reversed(colorsys.hls_to_rgb(cell, 0.5, 1.))) for cell in row] for row in corner_orientation])
 	pimg = numpy.copy(debugimg)
 	for y in xrange(project_grid_points.shape[0]):
@@ -1327,9 +955,9 @@ def main():
 			cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 4, grid_color)
 	#for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
 	#	cv2.circle(corner_likelihood, (int(round(bp[0])), int(round(bp[1]))), 8, 255)
-	cv2.imshow(WINNAME, pimg)
+	#cv2.imshow(WINNAME, pimg)
 	#cv2.imshow(WINNAME, corner_likelihood*10000000)
-	key = cv2.waitKey(0)
+	#key = cv2.waitKey(0)
 
 
 	best_corners_flat = best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2])
@@ -1372,7 +1000,7 @@ def main():
 	key = cv2.waitKey(0)
 
 
-def get_edge_likelihood(point, corners, corner_likelihood, corner_orientation, debugimg):
+def get_edge_likelihood(point, corners, corner_orientation):
 	"""Return the strength of a candidate edge according to the image of edges
 
 	The resulting matrix of points forms a matrix where every other element is zero:
@@ -1396,48 +1024,28 @@ def get_edge_likelihood(point, corners, corner_likelihood, corner_orientation, d
 		(corner_x1_idx, corner_y1_idx) = (grid_x // 2, grid_y // 2)
 		(corner_x2_idx, corner_y2_idx) = (corner_x1_idx, corner_y1_idx + 1)
 	# TODO: This is probably the least efficient way to iterate over points in a line
-	canvas = numpy.zeros(corner_likelihood.shape).astype('uint8')
 	(corner_x1, corner_y1) = corners[corner_y1_idx][corner_x1_idx]
 	(corner_x2, corner_y2) = corners[corner_y2_idx][corner_x2_idx]
 	target_angle = math.atan2(corner_y2 - corner_y1, corner_x2 - corner_x1) + math.pi/2
+	# The canvas has to use 8-bit channels for anti-aliasing to work
+	canvas = numpy.zeros(corner_orientation.shape).astype('uint8')
 	cv2.line(canvas, (corner_x1, corner_y1), (corner_x2, corner_y2), 255, lineType=cv2.LINE_AA)
-	filtered = canvas.astype('float32') * corner_likelihood
-	mean = numpy.sum(filtered) / numpy.linalg.norm([corner_x2 - corner_x1, corner_y2 - corner_y1])
 	pixels = []
 	total_weight = 0
 	for y in xrange(int(min(corner_y1, corner_y2)), int(max(corner_y1, corner_y2)) + 1):
 		for x in xrange(int(min(corner_x1, corner_x2)), int(max(corner_x1, corner_x2)) + 1):
 			try:
-				weight = canvas.item(y, x) / 256.
-				total_weight += weight
-				#score = filtered.item(y, x)
+				weight = canvas.item(y, x)
 				item = corner_orientation.item(y, x)
 			except IndexError:
 				continue
 			if not weight:
 				continue
+			total_weight += weight
 			match = math.cos(item - target_angle)**2
 			score = match * weight
-			#print('  pixel', item, target_angle, match, debugimg[y][x], '->', [0., 0., match])
 			pixels.append(score)
-			try:
-				#debugimg[y][x] = list(reversed(colorsys.hls_to_rgb(match, 0.5, 1.)))
-				debugimg[y][x] = [match, match, match]
-			except IndexError:
-				pass
-	#score = numpy.percentile(pixels, 25) if pixels else 0
-	score = sum(pixels) / (total_weight if total_weight else 1)
-	#print('pixels', sorted(pixels))
-	print('score', score, ':', (corner_x1_idx, corner_y1_idx), '->', (corner_x2_idx, corner_y2_idx))
-	scoreimg = numpy.copy(color_global)
-	#width = int(round(score / 500.))
-	#if width > 0:
-	#	#cv2.line(debugimg, (corner_x1, corner_y1), (corner_x2, corner_y2), 255, width)
-	#	cv2.line(scoreimg, (corner_x1, corner_y1), (corner_x2, corner_y2), (0, 0, 255))
-	#if score > 0:
-	#	cv2.line(scoreimg, (corner_x1, corner_y1), (corner_x2, corner_y2), (0, 0, 255))
-	#	cv2.imshow(WINNAME, scoreimg)
-	#	key = cv2.waitKey(0)
+	score = sum(pixels) / (total_weight / 256. if total_weight else 1.)
 	return score
 
 
