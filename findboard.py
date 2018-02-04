@@ -143,14 +143,21 @@ def main():
 			#print(left, '=>', right)
 			connected_indices[left//4][right//4].append(pair)
 	#print('CONN_IND', len(connected_indices), connected_indices)
-	uniques = {left_idx: right_counts.keys()
+	# If two quads overlap on 3 or more corners, then discard the one that was found
+	# first, which is the one found in the noiser image with the smaller block size and larger kernel size.
+	complementary = {left_idx: right_counts
 		for (left_idx, right_counts) in connected_indices.iteritems()
-		# If two quads overlap on 3 or more corners, then discard the one that was found
-		# first, which is the one found in the noiser image with the smaller block size and larger kernel size.
+		if any(
+				all(is_complementary_corner(pair[0], pair[1], good, color2) for pair in connected_pairs)
+				for (right_idx, connected_pairs) in right_counts.iteritems())}
+	uniques = {left_idx: right_counts
+		for (left_idx, right_counts) in complementary.iteritems()
 		if all(
 			right_idx < left_idx or
-			all(is_complementary_corner(pair[0], pair[1], good, color2) for pair in connected_pairs)
+			right_idx not in complementary or
+			len(connected_pairs) < 3
 			for (right_idx, connected_pairs) in right_counts.iteritems())}
+
 
 	#print('UNIQUES', len(uniques), uniques)
 	connected_map = [left_idx for (left_idx, right_keys) in uniques.iteritems() if any(key in uniques for key in right_keys)]
@@ -987,8 +994,8 @@ def main():
 		cv2.line(bg, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
 	except OverflowError:
 		pass
-	cv2.imshow(WINNAME, bg)
-	key = cv2.waitKey(1)
+	#cv2.imshow(WINNAME, bg)
+	#key = cv2.waitKey(1)
 
 	tvec = numpy.array([0., 0., 1.])
 	def reverse_project(p):
@@ -1244,6 +1251,7 @@ def main():
 	#corner_likelihood = cv2.log(cv2.Scharr(img1f, -1, 1, 0)**2 + cv2.Scharr(img1f, -1, 0, 1)**2)
 	corner_likelihood = cv2.Scharr(img1f, -1, 1, 0)**2 + cv2.Scharr(img1f, -1, 0, 1)**2
 	corner_orientation = cv2.phase(cv2.Scharr(img1f, -1, 1, 0), cv2.Scharr(img1f, -1, 0, 1))
+	#corner_orientation = cv2.phase(cv2.Sobel(img1f, -1, 1, 0), cv2.Sobel(img1f, -1, 0, 1))
 	#cv2.imshow(WINNAME, numpy.cos(corner_orientation)**2)
 	#key = cv2.waitKey(0)
 
@@ -1277,7 +1285,10 @@ def main():
 	board_max_idx = numpy.unravel_index(board_max_flat_idx, aligned_max_edge_scores.shape[:2])
 	top_score = aligned_max_edge_scores.item(board_max_idx)
 	contenders = list(itertools.takewhile(lambda x: x >= top_score*0.98, reversed(sorted([cell for row in aligned_max_edge_scores for cell in row]))))
-	print('top board positions', (contenders[0] - contenders[1]) / contenders[0] * 144 / 17, contenders)
+	if len(contenders) > 1:
+		print('top board positions', (contenders[0] - contenders[1]) / contenders[0] * 144 / 17, contenders)
+	else:
+		print('only top board position', contenders)
 	best_corners = corners[board_max_idx[0]:board_max_idx[0]+9, board_max_idx[1]:board_max_idx[1]+9]
 	#cv2.imshow(WINNAME, debugimg)
 	#key = cv2.waitKey(0)
@@ -1302,6 +1313,18 @@ def main():
 			cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 4, grid_color)
 	for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
 		cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 4, (0, 255, 255))
+	for y in xrange(project_grid_points.shape[0]):
+		for x in xrange(project_grid_points.shape[1]):
+			cp = project_grid_points[y][x]
+			try:
+				score = aligned_max_edge_scores[y][x]
+				if score >= top_score*0.98:
+					grid_color = (0, 0, 1.)
+				else:
+					continue
+			except IndexError:
+				continue
+			cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 4, grid_color)
 	#for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
 	#	cv2.circle(corner_likelihood, (int(round(bp[0])), int(round(bp[1]))), 8, 255)
 	cv2.imshow(WINNAME, pimg)
