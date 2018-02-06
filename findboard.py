@@ -235,20 +235,7 @@ def main():
 					projected_point = point
 				projected_quad.append(projected_point)
 
-			# Try both possible orientations of each quad
 			rotated_quad = projected_quad[1:] + projected_quad[:1]
-			#if (self.quad_alignment_error(projected_quad, vp1) + self.quad_alignment_error(rotated_quad, vp2) <
-			#	self.quad_alignment_error(rotated_quad, vp1) + self.quad_alignment_error(projected_quad, vp2)):
-			#	self.quad_alignment_error(projected_quad, vp1, debug=True)
-			#	self.quad_alignment_error(rotated_quad, vp2, debug=True)
-			#else:
-			#	self.quad_alignment_error(rotated_quad, vp1, debug=True)
-			#	self.quad_alignment_error(projected_quad, vp2, debug=True)
-
-
-			#distance += min(
-			#	self.quad_alignment_error(projected_quad, vp1) + self.quad_alignment_error(rotated_quad, vp2),
-			#	self.quad_alignment_error(rotated_quad, vp1) + self.quad_alignment_error(projected_quad, vp2))
 			distance += self.quad_alignment_error(projected_quad, vp1) + self.quad_alignment_error(rotated_quad, vp2)
 
 			#print('distance', distance)
@@ -559,8 +546,13 @@ def main():
 	image_dim = numpy.array([color3.shape[1], color3.shape[0]])
 	oi = image_dim / 2.
 
-	oi_projection = numpy.dot(oi - vp1, unit_horizon)
-	vi = vp1 + oi_projection * unit_horizon
+	oi_projection1 = numpy.dot(oi - vp1, unit_horizon)
+	oi_projection2 = numpy.dot(oi - vp2, unit_horizon)
+	# Vanishing points near infinity cause large rounding errors, so we choose the shortest projection
+	if oi_projection1 <= oi_projection2:
+		vi = vp1 + oi_projection1 * unit_horizon
+	else:
+		vi = vp2 + oi_projection2 * unit_horizon
 
 	# The horizon may be inverted, which would result in a homography that looks through the bottom of the chessboard
 	# This can be corrected by switching the vanishing points
