@@ -445,7 +445,7 @@ def main():
 
 	threshold = sum((dim/16.)**2 for dim in color3.shape[0:2])
 	#print('thresh', threshold)
-	visible_squares_estimate = 8 * 8 / 4
+	visible_squares_estimate = 3
 	success_rate = 0.999999
 	retries = int(math.ceil(math.log(1 - success_rate,
 		max(0.5, 1 - visible_squares_estimate / float(len(target_pts))))))
@@ -1042,30 +1042,70 @@ def get_edge_likelihood(point, corners, corner_orientation):
 		# Calculate the vertical edge
 		(corner_x1_idx, corner_y1_idx) = (grid_x // 2, grid_y // 2)
 		(corner_x2_idx, corner_y2_idx) = (corner_x1_idx, corner_y1_idx + 1)
-	# TODO: This is probably the least efficient way to iterate over points in a line
 	(corner_x1, corner_y1) = corners[corner_y1_idx][corner_x1_idx]
 	(corner_x2, corner_y2) = corners[corner_y2_idx][corner_x2_idx]
 	target_angle = math.atan2(corner_y2 - corner_y1, corner_x2 - corner_x1) + math.pi/2
-	# The canvas has to use 8-bit channels for anti-aliasing to work
-	canvas = numpy.zeros(corner_orientation.shape).astype('uint8')
-	cv2.line(canvas, (corner_x1, corner_y1), (corner_x2, corner_y2), 255, lineType=cv2.LINE_AA)
 	total_score = 0
 	total_weight = 0
-	for y in xrange(int(min(corner_y1, corner_y2)), int(max(corner_y1, corner_y2)) + 1):
-		for x in xrange(int(min(corner_x1, corner_x2)), int(max(corner_x1, corner_x2)) + 1):
-			try:
-				weight = canvas.item(y, x)
-				if not weight:
-					continue
-				item = corner_orientation.item(y, x)
-			except IndexError:
-				continue
-			total_weight += weight
-			match = math.cos(item - target_angle)**2
-			score = match * weight
-			total_score += score
-	score = total_score / (total_weight / 256. if total_weight else 1.)
+	for ((x, y), weight) in draw_line_iter((corner_x1, corner_y1), (corner_x2, corner_y2)):
+		try:
+			item = corner_orientation.item(y, x)
+		except IndexError:
+			continue
+		total_weight += weight
+		match = math.cos(item - target_angle)**2
+		score = match * weight
+		total_score += score
+	score = (total_score / total_weight) if total_weight else 0.
 	return score
+
+
+def _fpart(x):
+    return x - int(x)
+
+
+def _rfpart(x):
+    return 1 - _fpart(x)
+
+
+def draw_line_iter(p1, p2):
+    """Draws an anti-aliased line from p1 to p2
+
+    Adapted from https://rosettacode.org/wiki/Xiaolin_Wu%27s_line_algorithm#Python"""
+    x1, y1, x2, y2 = p1 + p2
+    dx, dy = x2-x1, y2-y1
+    steep = abs(dx) < abs(dy)
+    p = lambda px, py: ((px,py), (py,px))[steep]
+
+    if steep:
+        x1, y1, x2, y2, dx, dy = y1, x1, y2, x2, dy, dx
+    if x2 < x1:
+        x1, x2, y1, y2 = x2, x1, y2, y1
+
+    grad = dy/float(dx)
+    intery = y1 + _rfpart(x1) * grad
+    def draw_endpoint(pt):
+        x, y = pt
+        xend = round(x)
+        yend = y + grad * (xend - x)
+        xgap = _rfpart(x + 0.5)
+        px, py = int(xend), int(yend)
+        return (px, [((px, py), _rfpart(yend) * xgap), ((px, py+1), _fpart(yend) * xgap)])
+
+    (xstart, pixels) = draw_endpoint(p(*p1))
+    for pixel in pixels:
+        yield pixel
+    (xend, pixels) = draw_endpoint(p(*p2))
+    for pixel in pixels:
+        yield pixel
+    if xstart > xend:
+        (xstart, xend) = (xend, xstart)
+
+    for x in range(xstart + 1, xend):
+        y = int(intery)
+        yield (p(x, y), _rfpart(intery))
+        yield (p(x, y+1), _fpart(intery))
+        intery += grad
 
 
 def filter_quads(contours):
