@@ -76,119 +76,6 @@ def main():
 	#key = cv2.waitKey(0)
 
 
-	if False:
-		(h, w, _) = color2.shape
-		f = max(h, w)
-		fx = fy = f
-		default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
-		inv_default_mtx = numpy.linalg.inv(default_mtx)
-		dist = None
-
-		world_coordinates = numpy.array([
-			[0., 0., 0.],
-			[0., 8., 0.],
-			[8., 8., 0.],
-			[8., 0., 0.],
-		])
-		image_coordinates = numpy.array([
-			[416., 448.],
-			[246., 628.],
-			[959., 631.],
-			[813., 449.],
-		])
-		image_coordinates2 = numpy.array([
-			[0., 0.],
-			[0., 8.],
-			[8., 8.],
-			[8., 0.],
-		])
-		image_coordinates3 = numpy.array([
-			[640., 360.],
-			[640., 368.],
-			[648., 368.],
-			[648., 360.],
-		])
-		planar_world_coordinates = numpy.array([p[:2] for p in world_coordinates])
-
-
-		def demo_square(square, title):
-			pimg = numpy.copy(color2)
-			print('plotting square', title, square)
-			cv2.fillPoly(pimg, numpy.int32([square]), (255, 255, 255))
-			cv2.imshow(WINNAME, pimg)
-			key = cv2.waitKey(0)
-
-		def demo_pose(rvecs, tvecs, title):
-			print('pose', title, rvecs * 180. / math.pi, tvecs)
-			square, j = cv2.projectPoints(world_coordinates, rvecs, tvecs, default_mtx, dist)
-			demo_square(square, title)
-
-
-
-
-		default_mtx = numpy.array([
-			[100, 0, 320],
-			[0, 100, 240],
-			[0, 0, 1],
-		]).astype('float32')
-		homog = numpy.array([
-			[0.04136041220427821, 0.04748763375951008, 358.5557917287962],
-			[0.05074854454707714, 0.06137211243830468, 297.4585754092336],
-			[8.294458769850147e-05, 0.0002294875562580223, 1.],
-		])
-		retval, rotations, translations, normals = cv2.decomposeHomographyMat(homog, default_mtx)
-		print('decompose retval', retval)
-		for (decomposed_rmatrix, decomposed_tvecs, decomposed_normal) in zip(rotations, translations, normals):
-			decomposed_rvecs, j = cv2.Rodrigues(decomposed_rmatrix)
-			#print('scaling', manual_tvecs[2][0] / decomposed_tvecs[2][0])
-			#scaled_tvecs = decomposed_tvecs * (manual_tvecs[2][0] / decomposed_tvecs[2][0])
-			demo_pose(decomposed_rvecs, decomposed_tvecs, 'DECOMPOSED')
-
-		return
-
-
-		demo_square(image_coordinates, 'TRUTH')
-
-
-		homog, mask = cv2.findHomography(planar_world_coordinates, image_coordinates)
-		project_homog = cv2.perspectiveTransform(numpy.array([planar_world_coordinates]), homog)
-		demo_square(project_homog, 'PERSP')
-
-
-		success, solved_rvecs, solved_tvecs = cv2.solvePnP(world_coordinates, image_coordinates, default_mtx, dist)
-		demo_pose(solved_rvecs, solved_tvecs, 'SOLVED')
-
-
-		camera_homog = numpy.dot(numpy.linalg.inv(default_mtx), homog)
-		manual_pose = numpy.concatenate([
-			camera_homog[:,0:2],
-			numpy.cross(camera_homog[:,0], camera_homog[:,1]).reshape(3, 1),
-			camera_homog[:,2:] * 2. / (numpy.linalg.norm(camera_homog[:,0]) + numpy.linalg.norm(camera_homog[:,1]))
-		], axis=1)
-		(manual_rvecs, manual_tvecs) = (cv2.Rodrigues(manual_pose[:,:3])[0], manual_pose[:,3:4])
-		demo_pose(manual_rvecs, manual_tvecs, 'MANUAL')
-
-
-
-		translate_mtx = numpy.array([[1, 0, w/2.], [0, 1, h/2.], [0, 0, 1]]).astype('float32')
-		#translate_mtx = numpy.array([[fx, 0, w*20], [0, fy, h*20], [0, 0, 1]]).astype('float32')
-		magnify_mtx = numpy.array([[1, 0, w/2.], [0, 1, h/2.], [0, 0, 1]]).astype('float32')
-		default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
-		decompose_homog = numpy.dot(numpy.dot(numpy.linalg.inv(default_mtx), homog), default_mtx)
-		print('decompose_homog', decompose_homog)
-		retval, rotations, translations, normals = cv2.decomposeHomographyMat(camera_homog, default_mtx)
-		print('decompose retval', retval)
-		for (decomposed_rmatrix, decomposed_tvecs, decomposed_normal) in zip(rotations, translations, normals):
-			decomposed_rvecs, j = cv2.Rodrigues(decomposed_rmatrix)
-			print('scaling', manual_tvecs[2][0] / decomposed_tvecs[2][0])
-			scaled_tvecs = decomposed_tvecs * (manual_tvecs[2][0] / decomposed_tvecs[2][0])
-			demo_pose(decomposed_rvecs, scaled_tvecs, 'DECOMPOSED')
-
-
-		return
-
-
-
 	#ret,thresh = cv2.threshold(img1,127,255,0)
 	contours = []
 	is_light_contours = []
@@ -712,7 +599,7 @@ def main():
 	f = max(h, w)
 	fx = fy = f
 	#(fx, fy) = (120., 16.)
-	default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
+	default_mtx = numpy.array([[fx, 0, (w - 1)/2.], [0, fy, (h - 1)/2.], [0, 0, 1]]).astype('float32')
 	inv_default_mtx = numpy.linalg.inv(default_mtx)
 	x_axis = numpy.array([vp1[0], vp1[1], 1])
 	y_axis = numpy.array([vp2[0], vp2[1], 1])
@@ -904,7 +791,7 @@ def main():
 	(h, w, _) = color3.shape
 	f = max(h, w)
 	fx = fy = f
-	default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
+	default_mtx = numpy.array([[fx, 0, (w - 1)/2.], [0, fy, (h - 1)/2.], [0, 0, 1]]).astype('float32')
 
 	#print('before', r, tvec)
 	newr, newj = cv2.Rodrigues(rvecs)
@@ -1083,32 +970,28 @@ def main():
 	#key = cv2.waitKey(0)
 
 
+	#rotated_grid = numpy.array([[[float(x), float(y), 0.] for x in xrange(9)] for y in xrange(9)])
+	rotated_grid = numpy.array([[[float(x), float(y), 0.] for y in xrange(9) for x in xrange(9)]])
 	if is_offset_board:
-		#rotated_grid = numpy.array([[[float(x), float(y)] for x in xrange(8, -1, -1) for y in xrange(9)]])
-		rotated_grid = numpy.array([[[float(x), float(y)] for y in xrange(9) for x in xrange(9)]])
 		best_corners = numpy.array([[best_corners[y][x] for y in xrange(9)] for x in xrange(8, -1, -1)])
-	else:
-		rotated_grid = numpy.array([[[float(x), float(y)] for y in xrange(9) for x in xrange(9)]])
-	best_corners_flat = best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2])
-	#success, rvecs, tvecs = cv2.solvePnP(grid_corners_coord, best_corners_flat, default_mtx, dist, rvecs, tvecs, useExtrinsicGuess=True)
-	#if not success:
-	#	raise RuntimeError('Failed to find pose')
-	#project_grid_points_result, j = cv2.projectPoints(grid_corners_coord, rvecs, tvecs, default_mtx, dist)
-	fhomog, mask = cv2.findHomography(rotated_grid, best_corners_flat)
-	chess_grid = numpy.array([[[float(x), float(y)] for y in xrange(9) for x in xrange(9)]])
-	project_grid_points_result = cv2.perspectiveTransform(chess_grid, fhomog)
+
+
+	best_corners_input = best_corners.reshape(1, 81, 2).astype('float32')
+	err, cameraMatrix, distCoeffs, rvecs, tvecs = cv2.calibrateCamera(rotated_grid.astype('float32'), best_corners_input, (color2.shape[1], color2.shape[0]), default_mtx, numpy.zeros(5).astype('float32'), flags=(cv2.CALIB_USE_INTRINSIC_GUESS + cv2.CALIB_FIX_PRINCIPAL_POINT))
 
 
 
+	chess_grid = numpy.array([[[float(x), float(y), 0.] for y in xrange(9) for x in xrange(9)]])
+	project_grid_points_result, j = cv2.projectPoints(chess_grid, rvecs[0], tvecs[0], cameraMatrix, distCoeffs)
 	project_grid_points = project_grid_points_result.reshape(9, 9, 2)
+
 	pimg = numpy.copy(color3)
 	square = numpy.int32([[
 		project_grid_points[0][0],
-		project_grid_points[0][-1],
-		project_grid_points[-1][-1],
 		project_grid_points[-1][0],
+		project_grid_points[-1][-1],
+		project_grid_points[0][-1],
 	]])
-	print('square', pimg.shape, square)
 	cv2.fillPoly(pimg, square, (255, 255, 255))
 	for y in xrange(8):
 		for x in xrange(8):
@@ -1117,263 +1000,21 @@ def main():
 				continue
 			square = numpy.int32([[
 				project_grid_points[y][x],
-				project_grid_points[y][x+1],
-				project_grid_points[y+1][x+1],
 				project_grid_points[y+1][x],
-			]])
-			cv2.fillPoly(pimg, square, (0, 0, 0))
-	#for bp in project_grid_points.reshape(project_grid_points.shape[0] * project_grid_points.shape[1], project_grid_points.shape[2]):
-	#	cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 5, (0, 255, 0))
-	#cv2.imshow(WINNAME, pimg)
-	#key = cv2.waitKey(0)
-
-
-	# Refine the vanishing point calculations
-	print('vps (orig)', vp1, vp2)
-	print('fhomog', fhomog)
-	vp1_coord = numpy.dot(fhomog, numpy.array([1., 0., 0.]).reshape(3,1)).reshape(3)
-	vp1 = vp1_coord[:2] / vp1_coord[2]
-	vp2_coord = numpy.dot(fhomog, numpy.array([0., 1., 0.]).reshape(3,1)).reshape(3)
-	vp2 = vp2_coord[:2] / vp2_coord[2]
-	print('vps (refined)', vp1, vp2)
-
-	# Calculate the camera parameters
-	# See https://fedcsis.org/proceedings/2012/pliks/110.pdf
-	horizon = vp2 - vp1
-	horizon_norm = numpy.linalg.norm(horizon)
-	unit_horizon = horizon / horizon_norm if horizon_norm != 0. else numpy.zeros(horizon.shape)
-	image_dim = numpy.array([color3.shape[1], color3.shape[0]])
-	oi = image_dim / 2.
-
-	oi_projection1 = numpy.dot(oi - vp1, unit_horizon)
-	oi_projection2 = numpy.dot(oi - vp2, unit_horizon)
-	# Vanishing points near infinity cause large rounding errors, so we choose the shortest projection
-	if oi_projection1 <= oi_projection2:
-		vi = vp1 + oi_projection1 * unit_horizon
-	else:
-		vi = vp2 + oi_projection2 * unit_horizon
-
-	# The horizon may be inverted, which would result in a homography that looks through the bottom of the chessboard
-	# This can be corrected by switching the vanishing points
-	if numpy.linalg.det([vi - oi, vp2 - vp1]) < 0:
-		(vp1, vp2) = (vp2, vp1)
-
-	square_f = numpy.linalg.norm(vi - vp1) * numpy.linalg.norm(vi - vp2) - numpy.linalg.norm(vi - oi)**2
-	if square_f > 0:
-		f = math.sqrt(square_f)
-		print('focal length', f)
-	else:
-		print("Camera center is not aligned with image center", file=sys.stderr)
-		f = max(image_dim)
-	(h, w, _) = color3.shape
-	#f = max(h, w)
-	fx = fy = f
-	#(fx, fy) = (120., 16.)
-	default_mtx = numpy.array([[fx, 0, w/2.], [0, fy, h/2.], [0, 0, 1]]).astype('float32')
-	print('camera matrix', default_mtx)
-
-
-
-	options = []
-	short_options = []
-	success, rvecs, tvecs = cv2.solvePnP(numpy.array([[p[0], p[1], 0.] for p in rotated_grid[0]]), best_corners_flat, default_mtx, dist)
-	print('solved', rvecs, tvecs)
-	options.append(numpy.concatenate([cv2.Rodrigues(rvecs)[0], tvecs.reshape(3, 1)], axis=1))
-	#short_options.append((rvecs, tvecs))
-
-	retval, rotations, translations, normals = cv2.decomposeHomographyMat(fhomog, default_mtx)
-	for (rvec, tvec) in zip(rotations, translations):
-		print('decomposed', rvec, tvec)
-		c = numpy.concatenate([rvec, tvec], axis=1)
-		#denom = c[2, 3]
-		#if denom:
-		#	c /= denom
-		options.append(c)
-		#short_options.append((cv2.Rodrigues(rvec)[0], tvec))
-
-	print('def', default_mtx)
-	homog = numpy.dot(numpy.linalg.inv(default_mtx), fhomog)
-	#homog = numpy.dot(numpy.dot(default_mtx, fhomog), numpy.linalg.inv(default_mtx))
-	#homog = numpy.dot(numpy.linalg.inv(default_mtx), numpy.linalg.inv(numpy.dot(numpy.array([[0.01, 0., 0.], [0., 0.01, 0.], [0., 0., 1.]]), numpy.linalg.inv(fhomog))))
-	#homog = fhomog
-	z_rot = numpy.cross(homog[:,1], homog[:,0]).reshape(3, 1)
-	# FIXME
-	z_scale = math.sqrt(numpy.linalg.norm(homog[:,0])**2 + numpy.linalg.norm(homog[:,1])**2) / numpy.linalg.norm(z_rot)
-	manual = numpy.concatenate([
-		homog[:,0:2],
-		z_rot * z_scale,
-		#homog[:,2:] * 2. / (numpy.linalg.norm(homog[:,0]) + numpy.linalg.norm(homog[:,1]))
-		homog[:,2:]# * 2. / (numpy.linalg.norm(homog[:,0]) + numpy.linalg.norm(homog[:,1]))
-		#homog[:,2:] / math.sqrt(numpy.linalg.norm(homog[:,0]) * numpy.linalg.norm(homog[:,1]))
-	], axis=1)
-	print('RVECS ***********************', cv2.Rodrigues(manual)[0])
-	manual_copy = numpy.copy(manual)
-	project_grid_points_copy = numpy.copy(project_grid_points)
-
-	r1 = cv2.normalize(homog[:,0], numpy.array([]))
-	r2 = cv2.normalize(homog[:,1], numpy.array([]))
-	#r1 = homog[:,0:1]
-	#r2 = homog[:,1:2]
-	scale1 = (numpy.linalg.norm(homog[:,0]) + numpy.linalg.norm(homog[:,1])) / 2.
-	print('scale1', scale1)
-	manual1 = numpy.concatenate([
-		r1,
-		r2,
-		numpy.cross(r1.reshape(3), r2.reshape(3)).reshape(3, 1),
-		homog[:,2:] / scale1,
-	], axis=1)
-	print('manual **********************', manual)
-	manual1 = manual
-	options.append(manual1)
-	#short_options.append((cv2.Rodrigues(manual1[:,:3])[0], numpy.copy(manual1[:,3:4]), default_mtx))
-
-
-
-	scale_hint, j = cv2.projectPoints(numpy.array([[0., 0., 0.], [8., 0., 0.], [0., 8., 0.]]), cv2.Rodrigues(manual1[:,:3])[0], manual1[:,3:4], default_mtx, dist)
-	scale2_x = numpy.linalg.norm(project_grid_points[0][0] - project_grid_points[0][-1]) / numpy.linalg.norm(scale_hint[0] - scale_hint[1])
-	scale2_y = numpy.linalg.norm(project_grid_points[0][0] - project_grid_points[-1][0]) / numpy.linalg.norm(scale_hint[0] - scale_hint[2])
-	print('scale2', scale2_x, scale2_y)
-
-	default_mtx2 = numpy.linalg.inv(numpy.dot(numpy.array([[1./scale2_x, 0., 0.], [0., 1./scale2_y, 0.], [0., 0., 1.]]), numpy.linalg.inv(default_mtx)))
-	#short_options.append((cv2.Rodrigues(manual1[:,:3])[0], numpy.copy(manual1[:,3:4]), default_mtx2))
-
-
-
-
-	scale_hint3, j = cv2.projectPoints(numpy.array([[0., 0., 0.], [8., 0., 0.], [0., 8., 0.]]), cv2.Rodrigues(manual1[:,:3])[0], manual1[:,3:4], default_mtx2, dist)
-	scale3_x = numpy.linalg.norm(project_grid_points[0][0] - project_grid_points[0][-1]) / numpy.linalg.norm(scale_hint3[0] - scale_hint3[1])
-	scale3_y = numpy.linalg.norm(project_grid_points[0][0] - project_grid_points[-1][0]) / numpy.linalg.norm(scale_hint3[0] - scale_hint3[2])
-	print('scale3', scale3_x, scale3_y)
-	(trans3_x, trans3_y) = scale_hint3[0][0] - project_grid_points[0][0]
-	# FIXME: With the right translation, this could match.
-	# But it seems wrong to manipulate the estimated intrinsic parameters.
-	# These transformations need to be done on the tvec itself.
-	trans3_x_world = trans3_x / numpy.linalg.norm(project_grid_points[0][0] - project_grid_points[0][-1]) / 1.5
-	trans3_y_world = trans3_y / numpy.linalg.norm(project_grid_points[0][0] - project_grid_points[-1][0]) / 6.5
-	print('trans3', trans3_x, trans3_y)
-	default_mtx3 = numpy.linalg.inv(numpy.dot(numpy.array([[1./scale2_x, 0., trans3_x_world], [0., 1./scale2_y, trans3_y_world], [0., 0., 1.]]), numpy.linalg.inv(default_mtx)))
-	#short_options.append((cv2.Rodrigues(manual1[:,:3])[0], numpy.copy(manual1[:,3:4]), default_mtx3))
-
-
-	print('pre homog', homog)
-	homog = numpy.dot(homog, numpy.array([[1./scale2_x/10., 0., 0.], [0., 1./scale2_y*10., 0.], [0., 0., 1.]]))
-	print('post homog', homog)
-	#r1 = cv2.normalize(homog[:,0], numpy.array([]))
-	#r2 = cv2.normalize(homog[:,1], numpy.array([]))
-	r1 = homog[:,0:1]
-	r2 = homog[:,1:2]
-	scale2 = (numpy.linalg.norm(homog[:,0]) + numpy.linalg.norm(homog[:,1])) / 2.
-	manual2 = numpy.concatenate([
-		r1,
-		r2,
-		numpy.cross(r1.reshape(3), r2.reshape(3)).reshape(3, 1),
-		homog[:,2:] / scale1,
-	], axis=1)
-	#manual2 = numpy.dot(numpy.array([[1./scale2_x, 0., 0.], [0., 1./scale2_y, 0.], [0., 0., 1.]]), manual1)
-	manual2 = numpy.copy(manual1)
-	manual2[1][3] /= scale2_x
-	manual2[1][3] /= scale2_y
-	manual2[2][3] /= scale2_x * scale2_y
-	options.append(manual2)
-	#short_options.append((cv2.Rodrigues(manual2[:,:3])[0], numpy.copy(manual2[:,3:4])))
-
-
-
-	shift_mtx = numpy.array([[1./scale2_x, 0., 0., 0.], [0., 1./scale2_y, 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]])
-	shifted1 = numpy.dot(manual1, shift_mtx)
-	short_shifted = (cv2.Rodrigues(shifted1[:,:3])[0], numpy.copy(shifted1[:,3:4]), default_mtx)
-	print('round trip', manual1[:,0:3], cv2.Rodrigues(cv2.Rodrigues(manual1[:,0:3])[0])[0])
-	#short_options.append(short_shifted)
-
-
-	(d_c_mat, d_r_mat, d_tvec, rotMatrX, rotMatrY, rotMatrZ, eulerAngles) = cv2.decomposeProjectionMatrix(manual1)
-	print('decomposeProjection', cv2.Rodrigues(d_r_mat)[0], d_tvec)
-	#short_options.append((cv2.Rodrigues(d_r_mat)[0], cv2.convertPointsFromHomogeneous(numpy.array([d_tvec])).reshape(3,1), d_c_mat))
-	#short_options.append((cv2.Rodrigues(d_r_mat)[0], cv2.convertPointsFromHomogeneous(numpy.array([d_tvec])).reshape(3,1), default_mtx))
-
-	#options.append(cameraPoseFromHomography(homog))
-	print('manual', manual)
-
-	chess_corners_coord = numpy.array([[float(x), float(y), 0.] for y in xrange(0, 9) for x in xrange(0, 9)])
-
-	#for M in options:
-	#	rvecs, j = cv2.Rodrigues(M[:,:3])
-	#	tvecs = M[:,3]
-	for (rvecs, tvecs, default_mtx) in short_options:
-		M = None
-		dist = None
-		print('option', M, rvecs, tvecs, default_mtx)
-
-		#default_mtx = numpy.eye(3)
-		project_grid_points_result, j = cv2.projectPoints(chess_corners_coord, rvecs, tvecs, default_mtx, dist)
-		project_grid_points = project_grid_points_result.reshape(9, 9, 2)
-
-		pimg = numpy.copy(color3)
-		square = numpy.int32([[
-			project_grid_points[0][0],
-			project_grid_points[0][-1],
-			project_grid_points[-1][-1],
-			project_grid_points[-1][0],
-		]])
-		cv2.fillPoly(pimg, square, (255, 255, 255))
-		for y in xrange(8):
-			for x in xrange(8):
-				is_dark = bool((x + y) % 2)
-				if not is_dark:
-					continue
-				square = numpy.int32([[
-					project_grid_points[y][x],
-					project_grid_points[y][x+1],
-					project_grid_points[y+1][x+1],
-					project_grid_points[y+1][x],
-				]])
-				cv2.fillPoly(pimg, square, (0, 0, 0))
-
-		axis = numpy.float32([[0, 0, 0], [4,0,0], [0,4,0], [0,0,-4]]).reshape(-1,3)
-		imgpts, jac = cv2.projectPoints(axis, rvecs, tvecs, default_mtx, dist)
-		for pt in imgpts[1:]:
-			cv2.line(pimg, tuple(imgpts[0].ravel()), tuple(pt.ravel()), (255,0,0), 5)
-
-
-		cv2.imshow(WINNAME, pimg)
-		key = cv2.waitKey(0)
-
-
-	manual_projection_matrix = numpy.dot(default_mtx, manual_copy)
-	chess_corners_coord = numpy.array([[float(x), float(y), 0., 1.] for y in xrange(0, 9) for x in xrange(0, 9)])
-	project_grid_points_result = numpy.array([numpy.dot(manual_projection_matrix, p) for p in chess_corners_coord])
-	project_grid_points_result_from_h = numpy.array([[d / p[-1] for d in p[:-1]] for p in project_grid_points_result])
-	project_grid_points = project_grid_points_result_from_h.reshape(9, 9, 2)
-
-	pimg = numpy.copy(color3)
-	square = numpy.int32([[
-		project_grid_points[0][0],
-		project_grid_points[0][-1],
-		project_grid_points[-1][-1],
-		project_grid_points[-1][0],
-	]])
-	clockwise = numpy.cross(project_grid_points[0][-1] - project_grid_points[0][0], project_grid_points[-1][-1] - project_grid_points[0][-1]) >= 0
-
-	cv2.fillPoly(pimg, square, (255, 255, 255))
-	for y in xrange(8):
-		for x in xrange(8):
-			is_dark = bool((x + y) % 2)
-			if not is_dark:
-				continue
-			square = numpy.int32([[
-				project_grid_points[y][x],
-				project_grid_points[y][x+1],
 				project_grid_points[y+1][x+1],
-				project_grid_points[y+1][x],
+				project_grid_points[y][x+1],
 			]])
 			cv2.fillPoly(pimg, square, (0, 0, 0))
 
+	axis = numpy.float32([[0, 0, 0], [4,0,0], [0,4,0], [0,0,-4]]).reshape(-1,3)
+	imgpts, jac = cv2.projectPoints(axis, rvecs[0], tvecs[0], cameraMatrix, distCoeffs)
+	for pt in imgpts[1:]:
+		cv2.line(pimg, tuple(imgpts[0].ravel()), tuple(pt.ravel()), (255,0,0), 5)
 
 
-	pieces_coord = numpy.array([[float(x) + 0.5, float(y) + 0.5, float(z), 1.] for y in xrange(0, 2) for x in xrange(0, 8) for z in [0., 2.] ])
-	project_grid_points_result = numpy.array([numpy.dot(manual_projection_matrix, p) for p in pieces_coord])
-	project_grid_points_result_from_h = numpy.array([[d / p[-1] for d in p[:-1]] for p in project_grid_points_result])
-	project_grid_points = project_grid_points_result_from_h.reshape(16, 2, 2)
+	pieces_coord = numpy.array([[float(x) + 0.5, float(y) + 0.5, float(z)] for y in xrange(0, 2) for x in xrange(0, 8) for z in [0., -1.] ])
+	project_grid_points_result, j = cv2.projectPoints(pieces_coord, rvecs[0], tvecs[0], cameraMatrix, distCoeffs)
+	project_grid_points = project_grid_points_result.reshape(16, 2, 2)
 
 	for pidx in xrange(16):
 		base = project_grid_points[pidx][0]
@@ -1381,10 +1022,9 @@ def main():
 		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (255,192,192), 15)
 
 
-	pieces_coord = numpy.array([[float(x) + 0.5, float(y) + 0.5, float(z), 1.] for y in xrange(6, 8) for x in xrange(0, 8) for z in [0., 2.] ])
-	project_grid_points_result = numpy.array([numpy.dot(manual_projection_matrix, p) for p in pieces_coord])
-	project_grid_points_result_from_h = numpy.array([[d / p[-1] for d in p[:-1]] for p in project_grid_points_result])
-	project_grid_points = project_grid_points_result_from_h.reshape(16, 2, 2)
+	pieces_coord = numpy.array([[float(x) + 0.5, float(y) + 0.5, float(z)] for y in xrange(6, 8) for x in xrange(0, 8) for z in [0., -1.] ])
+	project_grid_points_result, j = cv2.projectPoints(pieces_coord, rvecs[0], tvecs[0], cameraMatrix, distCoeffs)
+	project_grid_points = project_grid_points_result.reshape(16, 2, 2)
 
 	for pidx in xrange(16):
 		base = project_grid_points[pidx][0]
@@ -1393,9 +1033,6 @@ def main():
 
 	cv2.imshow(WINNAME, pimg)
 	key = cv2.waitKey(0)
-
-
-
 
 
 
