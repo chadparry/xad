@@ -23,6 +23,11 @@ import traceback
 WINNAME = 'Chess Transcription'
 
 
+Projection = collections.namedtuple('Projection', ['cameraIntrinsics', 'pose'])
+CameraIntrinsics = collections.namedtuple('CameraIntrinsics', ['cameraMatrix', 'distCoeffs'])
+Pose = collections.namedtuple('Pose', ['rvec', 'tvec'])
+
+
 def grouper(iterable, n):
 	args = [iter(iterable)] * n
 	return zip(*args)
@@ -70,11 +75,72 @@ def main():
 
 	#(retval, color1) = webcam.read()
 	color1 = numpy.copy(color2)
-	img1 = cv2.cvtColor(color1, cv2.COLOR_BGR2GRAY)
 
 	#cv2.imshow(WINNAME, img1)
 	#key = cv2.waitKey(0)
 
+	corners = find_chessboard_corners(color2)
+	projection = get_projection(corners, color2.shape)
+
+	chess_grid = numpy.array([[[float(x), float(y), 0.] for y in xrange(9) for x in xrange(9)]])
+	project_grid_points_result, j = cv2.projectPoints(chess_grid, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
+	project_grid_points = project_grid_points_result.reshape(9, 9, 2)
+
+	pimg = numpy.copy(color2)
+	square = numpy.int32([[
+		project_grid_points[0][0],
+		project_grid_points[-1][0],
+		project_grid_points[-1][-1],
+		project_grid_points[0][-1],
+	]])
+	cv2.fillPoly(pimg, square, (255, 255, 255))
+	for y in xrange(8):
+		for x in xrange(8):
+			is_dark = bool((x + y) % 2)
+			if not is_dark:
+				continue
+			square = numpy.int32([[
+				project_grid_points[y][x],
+				project_grid_points[y+1][x],
+				project_grid_points[y+1][x+1],
+				project_grid_points[y][x+1],
+			]])
+			cv2.fillPoly(pimg, square, (0, 0, 0))
+
+	axis = numpy.float32([[0, 0, 0], [4,0,0], [0,4,0], [0,0,4]]).reshape(-1,3)
+	imgpts, jac = cv2.projectPoints(axis, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
+	for pt in imgpts[1:]:
+		cv2.line(pimg, tuple(imgpts[0].ravel()), tuple(pt.ravel()), (0,255,0), 2)
+
+
+	pieces_coord = numpy.array([[float(x) + 0.5, float(y) + 0.5, float(z)] for x in xrange(0, 2) for y in xrange(0, 8) for z in [0., 1.] ])
+	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
+	project_grid_points = project_grid_points_result.reshape(16, 2, 2)
+
+	for pidx in xrange(16):
+		base = project_grid_points[pidx][0]
+		top = project_grid_points[pidx][1]
+		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (255,192,192), 15)
+
+
+	pieces_coord = numpy.array([[float(x) + 0.5, float(y) + 0.5, float(z)] for x in xrange(6, 8) for y in xrange(0, 8) for z in [0., 1.] ])
+	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
+	project_grid_points = project_grid_points_result.reshape(16, 2, 2)
+
+	for pidx in xrange(16):
+		base = project_grid_points[pidx][0]
+		top = project_grid_points[pidx][1]
+		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (128,0,0), 15)
+
+	cv2.imshow(WINNAME, pimg)
+	key = cv2.waitKey(0)
+
+
+def find_chessboard_corners(image):
+	color1 = numpy.copy(image)
+	color2 = numpy.copy(image)
+
+	img1 = cv2.cvtColor(color1, cv2.COLOR_BGR2GRAY)
 
 	#ret,thresh = cv2.threshold(img1,127,255,0)
 	contours = []
@@ -825,28 +891,6 @@ def main():
 	#print('round trip', numpy.linalg.inv(fhomog), numpy.linalg.inv(numpy.dot(default_mtx, warp_h)))
 
 
-	rimg = numpy.copy(refimg)
-	warp_trans = numpy.array([[1., 0, float(min_snapped_x + 7)], [0., 1., float(min_snapped_y + 7)], [0., 0., 1.]])
-	warp_scale = numpy.array([[1/100., 0, 0.], [0., 1/100., 0.], [0., 0., 1.]])
-	warp_h = numpy.dot(numpy.dot(homog, warp_trans), warp_scale)
-	warp_m = numpy.linalg.inv(numpy.dot(default_mtx, warp_h))
-	rimg = cv2.warpPerspective(color3, warp_m, refimg.shape[:2])
-	for g in xrange(9):
-		cv2.line(rimg, (0, g * 100), (800, g * 100), (0, 0, 0))
-		cv2.line(rimg, (g * 100, 0), (g * 100, 800), (0, 0, 0))
-	for quad in [[(x / avg_x_side - avg_x_offset, y / avg_y_side - avg_y_offset) for (x, y) in quad] for quad in filtered_quads]:
-		for bp in quad:
-			cv2.circle(rimg, (int(round((bp[0]-min_snapped_x-7)*100)), int(round((bp[1]-min_snapped_y-7)*100))), 4, (255, 0, 0), -1)
-
-	apff = list(itertools.compress((p for quad in transformed_quads for p in quad), outlier_snap_filter))
-
-	for bp in apff:
-		cv2.circle(rimg, (int(round((bp[0]-min_snapped_x-7)*100)), int(round((bp[1]-min_snapped_y-7)*100))), 4, (0, 0, 255), -1)
-	#cv2.imshow(WINNAME, rimg)
-	#key = cv2.waitKey(0)
-
-
-
 	avg_x_side = 1.
 	avg_y_side = 1.
 
@@ -970,70 +1014,22 @@ def main():
 	#key = cv2.waitKey(0)
 
 
-	#rotated_grid = numpy.array([[[float(x), float(y), 0.] for x in xrange(9)] for y in xrange(9)])
-	rotated_grid = numpy.array([[[float(x), float(y), 0.] for y in xrange(9) for x in xrange(9)]])
 	if is_offset_board:
 		best_corners = numpy.array([[best_corners[y][x] for y in xrange(9)] for x in xrange(8, -1, -1)])
 
-
-	best_corners_input = best_corners.reshape(1, 81, 2).astype('float32')
-	err, cameraMatrix, distCoeffs, rvecs, tvecs = cv2.calibrateCamera(rotated_grid.astype('float32'), best_corners_input, (color2.shape[1], color2.shape[0]), default_mtx, numpy.zeros(5).astype('float32'), flags=(cv2.CALIB_USE_INTRINSIC_GUESS + cv2.CALIB_FIX_PRINCIPAL_POINT))
+	return best_corners
 
 
+def get_projection(corners, shape):
+	(h, w, _) = shape
+	f = max(h, w)
+	fx = fy = f
+	default_mtx = numpy.array([[fx, 0, (w - 1)/2.], [0, fy, (h - 1)/2.], [0, 0, 1]]).astype('float32')
 
-	chess_grid = numpy.array([[[float(x), float(y), 0.] for y in xrange(9) for x in xrange(9)]])
-	project_grid_points_result, j = cv2.projectPoints(chess_grid, rvecs[0], tvecs[0], cameraMatrix, distCoeffs)
-	project_grid_points = project_grid_points_result.reshape(9, 9, 2)
-
-	pimg = numpy.copy(color3)
-	square = numpy.int32([[
-		project_grid_points[0][0],
-		project_grid_points[-1][0],
-		project_grid_points[-1][-1],
-		project_grid_points[0][-1],
-	]])
-	cv2.fillPoly(pimg, square, (255, 255, 255))
-	for y in xrange(8):
-		for x in xrange(8):
-			is_dark = bool((x + y) % 2)
-			if not is_dark:
-				continue
-			square = numpy.int32([[
-				project_grid_points[y][x],
-				project_grid_points[y+1][x],
-				project_grid_points[y+1][x+1],
-				project_grid_points[y][x+1],
-			]])
-			cv2.fillPoly(pimg, square, (0, 0, 0))
-
-	axis = numpy.float32([[0, 0, 0], [4,0,0], [0,4,0], [0,0,-4]]).reshape(-1,3)
-	imgpts, jac = cv2.projectPoints(axis, rvecs[0], tvecs[0], cameraMatrix, distCoeffs)
-	for pt in imgpts[1:]:
-		cv2.line(pimg, tuple(imgpts[0].ravel()), tuple(pt.ravel()), (255,0,0), 5)
-
-
-	pieces_coord = numpy.array([[float(x) + 0.5, float(y) + 0.5, float(z)] for y in xrange(0, 2) for x in xrange(0, 8) for z in [0., -1.] ])
-	project_grid_points_result, j = cv2.projectPoints(pieces_coord, rvecs[0], tvecs[0], cameraMatrix, distCoeffs)
-	project_grid_points = project_grid_points_result.reshape(16, 2, 2)
-
-	for pidx in xrange(16):
-		base = project_grid_points[pidx][0]
-		top = project_grid_points[pidx][1]
-		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (255,192,192), 15)
-
-
-	pieces_coord = numpy.array([[float(x) + 0.5, float(y) + 0.5, float(z)] for y in xrange(6, 8) for x in xrange(0, 8) for z in [0., -1.] ])
-	project_grid_points_result, j = cv2.projectPoints(pieces_coord, rvecs[0], tvecs[0], cameraMatrix, distCoeffs)
-	project_grid_points = project_grid_points_result.reshape(16, 2, 2)
-
-	for pidx in xrange(16):
-		base = project_grid_points[pidx][0]
-		top = project_grid_points[pidx][1]
-		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (128,0,0), 15)
-
-	cv2.imshow(WINNAME, pimg)
-	key = cv2.waitKey(0)
-
+	best_corners_input = corners.reshape(1, 81, 2).astype('float32')
+	rotated_grid = numpy.array([[[float(x), float(y), 0.] for x in xrange(8, -1, -1) for y in xrange(8, -1, -1)]])
+	err, cameraMatrix, distCoeffs, rvecs, tvecs = cv2.calibrateCamera(rotated_grid.astype('float32'), best_corners_input, (shape[1], shape[0]), default_mtx, numpy.zeros(5).astype('float32'), flags=(cv2.CALIB_USE_INTRINSIC_GUESS + cv2.CALIB_FIX_PRINCIPAL_POINT))
+	return Projection(CameraIntrinsics(cameraMatrix=cameraMatrix, distCoeffs=distCoeffs), Pose(rvec=rvecs[0], tvec=tvecs[0]))
 
 
 def get_edge_likelihood(point, corners, corner_orientation):
