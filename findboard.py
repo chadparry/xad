@@ -113,24 +113,51 @@ def main():
 		cv2.line(pimg, tuple(imgpts[0].ravel()), tuple(pt.ravel()), (0,255,0), 2)
 
 
-	pieces_coord = numpy.array([[float(x) + 0.5, float(y) + 0.5, float(z)] for x in xrange(0, 2) for y in xrange(0, 8) for z in [0., 1.] ])
-	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
-	project_grid_points = project_grid_points_result.reshape(16, 2, 2)
+	square_size_mm = 57.15
+	king_height = 95. / square_size_mm
+	queen_height = 85. / square_size_mm
+	bishop_height = 70. / square_size_mm
+	knight_height = 60. / square_size_mm
+	rook_height = 55. / square_size_mm
+	pawn_height = 50. / square_size_mm
 
-	for pidx in xrange(16):
+	pieces_coord = numpy.array([[0.5, float(y) + 0.5, float(z)] for y in xrange(0, 8) for z in [0., queen_height]])
+	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
+	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
+
+	for pidx in xrange(8):
+		base = project_grid_points[pidx][0]
+		top = project_grid_points[pidx][1]
+		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (255,192,192), 15)
+
+	pieces_coord = numpy.array([[1.5, float(y) + 0.5, float(z)] for y in xrange(0, 8) for z in [0., pawn_height]])
+	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
+	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
+
+	for pidx in xrange(8):
 		base = project_grid_points[pidx][0]
 		top = project_grid_points[pidx][1]
 		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (255,192,192), 15)
 
 
-	pieces_coord = numpy.array([[float(x) + 0.5, float(y) + 0.5, float(z)] for x in xrange(6, 8) for y in xrange(0, 8) for z in [0., 1.] ])
+	pieces_coord = numpy.array([[7.5, float(y) + 0.5, float(z)] for y in xrange(0, 8) for z in [0., queen_height]])
 	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
-	project_grid_points = project_grid_points_result.reshape(16, 2, 2)
+	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
 
-	for pidx in xrange(16):
+	for pidx in xrange(8):
 		base = project_grid_points[pidx][0]
 		top = project_grid_points[pidx][1]
 		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (128,0,0), 15)
+
+	pieces_coord = numpy.array([[6.5, float(y) + 0.5, float(z)] for y in xrange(0, 8) for z in [0., pawn_height]])
+	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
+	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
+
+	for pidx in xrange(8):
+		base = project_grid_points[pidx][0]
+		top = project_grid_points[pidx][1]
+		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (128,0,0), 15)
+
 
 	cv2.imshow(WINNAME, pimg)
 	key = cv2.waitKey(0)
