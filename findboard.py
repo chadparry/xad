@@ -1055,7 +1055,7 @@ def get_projection(corners, shape):
 
 	best_corners_input = corners.reshape(1, 81, 2).astype('float32')
 	rotated_grid = numpy.array([[[float(x), float(y), 0.] for x in xrange(8, -1, -1) for y in xrange(8, -1, -1)]])
-	err, cameraMatrix, distCoeffs, rvecs, tvecs = cv2.calibrateCamera(rotated_grid.astype('float32'), best_corners_input, (shape[1], shape[0]), default_mtx, numpy.zeros(5).astype('float32'), flags=(cv2.CALIB_USE_INTRINSIC_GUESS + cv2.CALIB_FIX_PRINCIPAL_POINT))
+	err, cameraMatrix, distCoeffs, rvecs, tvecs = cv2.calibrateCamera(rotated_grid.astype('float32'), best_corners_input, (shape[1], shape[0]), default_mtx, numpy.zeros(5).astype('float32'), flags=(cv2.CALIB_USE_INTRINSIC_GUESS + cv2.CALIB_FIX_PRINCIPAL_POINT + cv2.CALIB_FIX_ASPECT_RATIO))
 	return Projection(CameraIntrinsics(cameraMatrix=cameraMatrix, distCoeffs=distCoeffs), Pose(rvec=rvecs[0], tvec=tvecs[0]))
 
 
