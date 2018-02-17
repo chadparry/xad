@@ -3,6 +3,7 @@
 import cv2
 import functools
 import itertools
+import math
 import ModernGL
 import numpy
 import operator
@@ -77,20 +78,20 @@ def height_attenuation(idx, x, y, z):
 
 
 def reflective_attenuation(idx, x, y, z):
-	return 0.3 if z <= 0 else 1.0
+	return 0.3 if z <= 0 else 1.
 
 
 def main():
 	ctx = ModernGL.create_standalone_context()
 
-	horizontal_resolution, vertical_resolution = (8, 8)
+	horizontal_resolution, vertical_resolution = (60, 120)
 	voxels = get_piece_voxels(horizontal_resolution, vertical_resolution)
 	#orthographic = (voxels * 0.5).sum(axis=1)
 	#cv2.imshow(WINNAME, orthographic)
 	#key = cv2.waitKey(0)
 
 	voxels_size = tuple(reversed(voxels.shape))
-	texture = ctx.texture3d(voxels_size, 1, voxels, floats=True)
+	texture = ctx.texture3d(voxels_size, 1, voxels / 10., floats=True)
 	texture.repeat_x = False
 	texture.repeat_y = False
 	texture.use()
@@ -99,53 +100,73 @@ def main():
 		ctx.vertex_shader('''
 			#version 330
 
-			in vec3 world_coord;
+			in vec3 canvas_coord;
 			in vec3 tex_coord;
 			out vec3 v_tex_coord;
 
 			void main() {
-				gl_Position = vec4(world_coord, 1.0);
+				gl_Position = vec4(canvas_coord, 1.);
 				v_tex_coord = tex_coord;
 			}
 		'''),
 		ctx.fragment_shader('''
 			#version 330
 
+			uniform mat4 pose;
 			uniform sampler3D voxels;
 
 			in vec3 v_tex_coord;
 			out vec4 color;
 
 			void main() {
-				color = vec4(0., 0., 0., texture(voxels, v_tex_coord));
+				vec4 hom_rot_tex_coord;
+				hom_rot_tex_coord = pose * vec4(v_tex_coord, 1.);
+				vec3 rot_tex_coord;
+				rot_tex_coord = hom_rot_tex_coord.xyz / hom_rot_tex_coord.w;
+				float alpha;
+				if (any(lessThan(rot_tex_coord, vec3(0., 0., 0.))) ||
+					any(greaterThan(rot_tex_coord, vec3(1., 1., 1.)))) {
+					alpha = 0.;
+				} else {
+					alpha = texture(voxels, rot_tex_coord).x;
+				}
+				color = vec4(0., 0., 0., alpha);
 			}
 		'''),
 	])
 
-	world_anchor = (-1., -1.)
+	prog.uniforms['pose'].write(numpy.float32([
+		[2., 0., 0., 0.],
+		[0., math.sin(math.pi/6.), -math.cos(math.pi/6.), 0.],
+		[0., math.cos(math.pi/6.), math.sin(math.pi/6.), 0.],
+		[0., 0., 0., 1.],
+	]).transpose())
+
+	canvas_anchor = (-1., -1.)
 	sw_triangle = [(1., 0.), (0., 0.), (0., 1.)]
 	ne_triangle = [(0., 1.), (1., 1.), (1., 0)]
 	triangle_vertices = list(itertools.chain(sw_triangle, ne_triangle))
 	slice_depths = ((get_vertical_coord(z, vertical_resolution), z / float(voxels.shape[0] - 1))
 		for z in range(voxels.shape[0]))
 	slices_iter = ((
-			world_anchor[0] + texture_xy[0] * 2.,
-			world_anchor[1] + texture_xy[1] * 2.,
-			world_z,
+			canvas_anchor[0] + texture_xy[0] * 2.,
+			canvas_anchor[1] + texture_xy[1] * 2.,
+			canvas_z,
 			texture_xy[0],
 			texture_xy[1],
 			texture_z,
 		)
-		for (world_z, texture_z) in slice_depths
+		for (canvas_z, texture_z) in slice_depths
 		for texture_xy in triangle_vertices)
 	slices_flattened_iter = (v for coord in slices_iter for v in coord)
 	slices_value_count = voxels.shape[0] * len(triangle_vertices) * 6
 	slices = numpy.fromiter(slices_flattened_iter, dtype='float32', count=slices_value_count)
 
 	vbo = ctx.buffer(slices)
-	vao = ctx.simple_vertex_array(prog, vbo, ['world_coord', 'tex_coord'])
+	vao = ctx.simple_vertex_array(prog, vbo, ['canvas_coord', 'tex_coord'])
 
-	fbo = ctx.framebuffer(ctx.renderbuffer((512, 512)))
+	frame_size = 512
+	fbo = ctx.framebuffer(ctx.renderbuffer((frame_size, frame_size)))
 
 	fbo.use()
 	ctx.enable(ModernGL.BLEND)
@@ -153,9 +174,11 @@ def main():
 	vao.render()
 
 	data = fbo.read(components=3, floats=True)
-	buf = numpy.flipud(numpy.frombuffer(data, dtype='float32').reshape(512, 512, 3))
-	colored = cv2.cvtColor(buf, cv2.COLOR_BGR2RGB)
-	cv2.imshow(WINNAME, colored)
+	output_shape = (frame_size, frame_size, 3)
+	flipped_rgb_projection = numpy.frombuffer(data, dtype='float32').reshape(output_shape)
+	flipped_projection = flipped_rgb_projection[:,:,0]
+	projection = numpy.flipud(numpy.fliplr(flipped_projection))
+	cv2.imshow(WINNAME, projection)
 	key = cv2.waitKey(0)
 
 
