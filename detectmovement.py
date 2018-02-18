@@ -83,6 +83,7 @@ def reflective_attenuation(idx, x, y, z):
 
 def main():
 	ctx = ModernGL.create_standalone_context()
+	ctx.clear(0., 0., 0.)
 
 	horizontal_resolution, vertical_resolution = (60, 120)
 	voxels = get_piece_voxels(horizontal_resolution, vertical_resolution)
@@ -91,94 +92,145 @@ def main():
 	#key = cv2.waitKey(0)
 
 	voxels_size = tuple(reversed(voxels.shape))
-	texture = ctx.texture3d(voxels_size, 1, voxels / 10., floats=True)
+	texture = ctx.texture3d(voxels_size, 1, voxels, floats=True)
 	texture.repeat_x = False
 	texture.repeat_y = False
+	texture.repeat_z = False
 	texture.use()
 
 	prog = ctx.program([
 		ctx.vertex_shader('''
 			#version 330
 
-			in vec3 canvas_coord;
-			in vec3 tex_coord;
-			out vec3 v_tex_coord;
+			in vec2 canvas_coord;
+			out vec2 tex_coord;
 
 			void main() {
-				gl_Position = vec4(canvas_coord, 1.);
-				v_tex_coord = tex_coord;
+				gl_Position = vec4(canvas_coord * 2. - 1., 0., 1.);
+				tex_coord = canvas_coord;
 			}
 		'''),
 		ctx.fragment_shader('''
 			#version 330
 
+			struct OptionalFloat {
+				bool isPresent;
+				float value;
+			};
+
 			uniform mat4 pose;
 			uniform sampler3D voxels;
 
-			in vec3 v_tex_coord;
+			in vec2 tex_coord;
 			out vec4 color;
 
-			void main() {
-				vec4 hom_rot_tex_coord;
-				hom_rot_tex_coord = pose * vec4(v_tex_coord, 1.);
-				vec3 rot_tex_coord;
-				rot_tex_coord = hom_rot_tex_coord.xyz / hom_rot_tex_coord.w;
-				float alpha;
-				if (any(lessThan(rot_tex_coord, vec3(0., 0., 0.))) ||
-					any(greaterThan(rot_tex_coord, vec3(1., 1., 1.)))) {
-					alpha = 0.;
+			void rotate(vec3 world_coord, mat4 rotation, out vec3 camera_coord) {
+				vec4 hom_world_coord = vec4(world_coord, 1.);
+				vec4 hom_camera_coord = rotation * hom_world_coord;
+				camera_coord = hom_camera_coord.xyz / hom_camera_coord.w;
+			}
+
+			void interceptBoundingBoxFace(float intercept,
+				float tail, float dir,
+				vec2 other_tail, vec2 other_dir,
+				out OptionalFloat dist
+			) {
+				if (dir == 0.) {
+					dist.isPresent = false;
 				} else {
-					alpha = texture(voxels, rot_tex_coord).x;
+					dist.value = (intercept - tail) / dir;
+					vec2 other_intercept = other_tail + other_dir * dist.value;
+					dist.isPresent = all(greaterThanEqual(other_intercept, vec2(0.))) &&
+						all(lessThanEqual(other_intercept, vec2(1.)));
 				}
-				color = vec4(0., 0., 0., alpha);
+			}
+
+			void intersectBoundingBox(vec2 coord, mat4 rotation, vec3 voxels_size,
+				out float min_z, out float max_z, out float depth, out int resolution
+			) {
+				vec3 tail, head;
+				rotate(vec3(coord, 0.), rotation, tail);
+				rotate(vec3(coord, 1.), rotation, head);
+				vec3 dir = head - tail;
+
+				OptionalFloat face_dist[6];
+				interceptBoundingBoxFace(0., tail.x, dir.x, tail.yz, dir.yz, face_dist[0]);
+				interceptBoundingBoxFace(1., tail.x, dir.x, tail.yz, dir.yz, face_dist[1]);
+				interceptBoundingBoxFace(0., tail.y, dir.y, tail.xz, dir.xz, face_dist[2]);
+				interceptBoundingBoxFace(1., tail.y, dir.y, tail.xz, dir.xz, face_dist[3]);
+				interceptBoundingBoxFace(0., tail.z, dir.z, tail.xy, dir.xy, face_dist[4]);
+				interceptBoundingBoxFace(1., tail.z, dir.z, tail.xy, dir.xy, face_dist[5]);
+
+				bool any_intercepted = false;
+				for (int i = 0; i < face_dist.length(); ++i) {
+					if (face_dist[i].isPresent) {
+						if (!any_intercepted || face_dist[i].value < min_z) {
+							min_z = face_dist[i].value;
+						}
+						if (!any_intercepted || face_dist[i].value > max_z) {
+							max_z = face_dist[i].value;
+						}
+						any_intercepted = true;
+					}
+				}
+
+				if (any_intercepted) {
+					vec3 min_intercept = tail + dir * min_z;
+					vec3 max_intercept = tail + dir * max_z;
+					vec3 boundingBoxTraversal = max_intercept - min_intercept;
+					depth = length(boundingBoxTraversal);
+					vec3 textureTraversal = voxels_size * boundingBoxTraversal;
+					float voxelsTraversed = length(textureTraversal);
+					resolution = int(ceil(voxelsTraversed));
+				} else {
+					resolution = 0;
+				}
+			}
+
+			void main() {
+				float min_z, max_z, depth;
+				int resolution;
+				intersectBoundingBox(tex_coord, pose, textureSize(voxels, 0), min_z, max_z, depth, resolution);
+				float perceived;
+				if (resolution > 0) {
+					float step_z = (max_z - min_z) / resolution;
+					float sum = 0.;
+					for (int i = 0; i < resolution; ++i) {
+						float z = min_z + (i + 0.5) * step_z;
+						vec3 rot_tex_coord;
+						rotate(vec3(tex_coord, z), pose, rot_tex_coord);
+						sum += texture(voxels, rot_tex_coord).x;
+					}
+					perceived = depth * sum / resolution;
+				} else {
+					perceived = 0.;
+				}
+				color = vec4(vec3(perceived), 1.);
 			}
 		'''),
 	])
 
-	prog.uniforms['pose'].write(numpy.float32([
-		[2., 0., 0., 0.],
-		[0., math.sin(math.pi/6.), -math.cos(math.pi/6.), 0.],
-		[0., math.cos(math.pi/6.), math.sin(math.pi/6.), 0.],
-		[0., 0., 0., 1.],
-	]).transpose())
-
-	canvas_anchor = (-1., -1.)
-	sw_triangle = [(1., 0.), (0., 0.), (0., 1.)]
-	ne_triangle = [(0., 1.), (1., 1.), (1., 0)]
-	triangle_vertices = list(itertools.chain(sw_triangle, ne_triangle))
-	slice_depths = ((get_vertical_coord(z, vertical_resolution), z / float(voxels.shape[0] - 1))
-		for z in range(voxels.shape[0]))
-	slices_iter = ((
-			canvas_anchor[0] + texture_xy[0] * 2.,
-			canvas_anchor[1] + texture_xy[1] * 2.,
-			canvas_z,
-			texture_xy[0],
-			texture_xy[1],
-			texture_z,
-		)
-		for (canvas_z, texture_z) in slice_depths
-		for texture_xy in triangle_vertices)
-	slices_flattened_iter = (v for coord in slices_iter for v in coord)
-	slices_value_count = voxels.shape[0] * len(triangle_vertices) * 6
-	slices = numpy.fromiter(slices_flattened_iter, dtype='float32', count=slices_value_count)
-
-	vbo = ctx.buffer(slices)
-	vao = ctx.simple_vertex_array(prog, vbo, ['canvas_coord', 'tex_coord'])
+	pose = numpy.float32([
+		[1., 0., 0., 0.],
+		[0., math.cos(math.pi/2.), -math.sin(math.pi/2.), 0.],
+		[0., math.sin(math.pi/2.), math.cos(math.pi/2.), 0.],
+		[0.0, 0., 0., 1.],
+	]).transpose()
+	prog.uniforms['pose'].write(pose)
 
 	frame_size = 512
-	fbo = ctx.framebuffer(ctx.renderbuffer((frame_size, frame_size)))
-
+	fbo = ctx.framebuffer(ctx.renderbuffer((frame_size, frame_size), components=1))
 	fbo.use()
-	ctx.enable(ModernGL.BLEND)
-	ctx.clear(1., 1., 1.)
-	vao.render()
 
-	data = fbo.read(components=3, floats=True)
-	output_shape = (frame_size, frame_size, 3)
-	flipped_rgb_projection = numpy.frombuffer(data, dtype='float32').reshape(output_shape)
-	flipped_projection = flipped_rgb_projection[:,:,0]
+	triangle_slice_vertices = numpy.float32([(0., 0.), (0., 1.), (1., 0.), (1., 1.)])
+	vbo = ctx.buffer(triangle_slice_vertices)
+	vao = ctx.simple_vertex_array(prog, vbo, ['canvas_coord'])
+	vao.render(ModernGL.TRIANGLE_STRIP)
+
+	data = fbo.read(components=1, floats=True)
+	flipped_projection = numpy.frombuffer(data, dtype='float32').reshape(fbo.size)
 	projection = numpy.flipud(numpy.fliplr(flipped_projection))
-	cv2.imshow(WINNAME, projection)
+	cv2.imshow(WINNAME, projection * 4.)
 	key = cv2.waitKey(0)
 
 
