@@ -74,7 +74,7 @@ def get_memoized_radial_attenuation(horizontal_resolution):
 
 
 def height_attenuation(idx, x, y, z):
-	return 1. - abs(z)
+	return 1 - abs(z) * math.sqrt((0.5 - x)**2 + (0.5 - y)**2)
 
 
 def reflective_attenuation(idx, x, y, z):
@@ -82,14 +82,50 @@ def reflective_attenuation(idx, x, y, z):
 
 
 def main():
-	ctx = ModernGL.create_standalone_context()
-	ctx.clear(0., 0., 0.)
+	SQUARE_SIZE_MM = 57.15
+	QUEEN_HEIGHT = 85. / SQUARE_SIZE_MM
+	frame_size = (1280, 720)
+
+	# Projection found by findboard
+	camera_matrix = numpy.float32([
+		[890.53161571,   0.        , 639.5       ],
+		[  0.        , 890.53161571, 359.5       ],
+		[  0.        ,   0.        ,   1.        ],
+	])
+	rvec = numpy.float32([
+		[-0.00675746],
+		[-2.39299275],
+		[ 2.0511568 ],
+	])
+	tvec = numpy.float32([
+		[ 3.4839375 ],
+		[ 1.80433699],
+		[17.95692787],
+	])
+
+	rotation, jacobian = cv2.Rodrigues(rvec)
+	inv_rotation = rotation.transpose()
+	inv_tvec = numpy.dot(inv_rotation, -tvec)
+	inv_pose = numpy.vstack([numpy.hstack([inv_rotation, inv_tvec]), numpy.float32([0, 0, 0, 1])])
+	inv_camera_matrix = numpy.linalg.inv(camera_matrix)
+	gl_scale = numpy.float32([
+		[frame_size[0] / 2., 0, 0],
+		[0, frame_size[1] / 2., 0],
+		[0, 0, 1],
+	])
+	gl_shift = numpy.float32([
+		[1, 0, 1],
+		[0, 1, 1],
+		[0, 0, 1],
+	])
+	gl_inv_camera_matrix = numpy.dot(inv_camera_matrix, numpy.dot(gl_scale, gl_shift))
+	ext_inv_camera_matrix = numpy.vstack([gl_inv_camera_matrix, numpy.float32([0, 0, 1])])
 
 	horizontal_resolution, vertical_resolution = (60, 120)
 	voxels = get_piece_voxels(horizontal_resolution, vertical_resolution)
-	#orthographic = (voxels * 0.5).sum(axis=1)
-	#cv2.imshow(WINNAME, orthographic)
-	#key = cv2.waitKey(0)
+
+	# This helper performs volume ray casting
+	ctx = ModernGL.create_standalone_context()
 
 	voxels_size = tuple(reversed(voxels.shape))
 	texture = ctx.texture3d(voxels_size, 1, voxels, floats=True)
@@ -106,7 +142,7 @@ def main():
 			out vec2 tex_coord;
 
 			void main() {
-				gl_Position = vec4(canvas_coord * 2. - 1., 0., 1.);
+				gl_Position = vec4(canvas_coord, 0., 1.);
 				tex_coord = canvas_coord;
 			}
 		'''),
@@ -118,16 +154,17 @@ def main():
 				float value;
 			};
 
-			uniform mat4 pose;
+			uniform mat3 inv_projection;
+			uniform vec3 camera_position;
 			uniform sampler3D voxels;
 
 			in vec2 tex_coord;
 			out vec4 color;
 
-			void rotate(vec3 world_coord, mat4 rotation, out vec3 camera_coord) {
-				vec4 hom_world_coord = vec4(world_coord, 1.);
-				vec4 hom_camera_coord = rotation * hom_world_coord;
-				camera_coord = hom_camera_coord.xyz / hom_camera_coord.w;
+			void reverse_project(vec2 image_coord, mat3 rotation, vec3 camera_position, out vec3 camera_ray) {
+				vec3 hom_image_coord = vec3(image_coord, 1);
+				vec3 world_coord = rotation * hom_image_coord;
+				camera_ray = world_coord - camera_position;
 			}
 
 			void interceptBoundingBoxFace(float intercept,
@@ -135,102 +172,121 @@ def main():
 				vec2 other_tail, vec2 other_dir,
 				out OptionalFloat dist
 			) {
-				if (dir == 0.) {
+				if (dir == 0) {
 					dist.isPresent = false;
 				} else {
 					dist.value = (intercept - tail) / dir;
 					vec2 other_intercept = other_tail + other_dir * dist.value;
-					dist.isPresent = all(greaterThanEqual(other_intercept, vec2(0.))) &&
-						all(lessThanEqual(other_intercept, vec2(1.)));
+					dist.isPresent = all(greaterThanEqual(other_intercept, vec2(0))) &&
+						all(lessThanEqual(other_intercept, vec2(1)));
 				}
 			}
 
-			void intersectBoundingBox(vec2 coord, mat4 rotation, vec3 voxels_size,
-				out float min_z, out float max_z, out float depth, out int resolution
-			) {
-				vec3 tail, head;
-				rotate(vec3(coord, 0.), rotation, tail);
-				rotate(vec3(coord, 1.), rotation, head);
-				vec3 dir = head - tail;
-
+			void intersectBoundingBox(vec3 tail, vec3 dir, out float min_z, out float max_z) {
 				OptionalFloat face_dist[6];
-				interceptBoundingBoxFace(0., tail.x, dir.x, tail.yz, dir.yz, face_dist[0]);
-				interceptBoundingBoxFace(1., tail.x, dir.x, tail.yz, dir.yz, face_dist[1]);
-				interceptBoundingBoxFace(0., tail.y, dir.y, tail.xz, dir.xz, face_dist[2]);
-				interceptBoundingBoxFace(1., tail.y, dir.y, tail.xz, dir.xz, face_dist[3]);
-				interceptBoundingBoxFace(0., tail.z, dir.z, tail.xy, dir.xy, face_dist[4]);
-				interceptBoundingBoxFace(1., tail.z, dir.z, tail.xy, dir.xy, face_dist[5]);
+				interceptBoundingBoxFace(0, tail.x, dir.x, tail.yz, dir.yz, face_dist[0]);
+				interceptBoundingBoxFace(1, tail.x, dir.x, tail.yz, dir.yz, face_dist[1]);
+				interceptBoundingBoxFace(0, tail.y, dir.y, tail.xz, dir.xz, face_dist[2]);
+				interceptBoundingBoxFace(1, tail.y, dir.y, tail.xz, dir.xz, face_dist[3]);
+				interceptBoundingBoxFace(0, tail.z, dir.z, tail.xy, dir.xy, face_dist[4]);
+				interceptBoundingBoxFace(1, tail.z, dir.z, tail.xy, dir.xy, face_dist[5]);
 
-				bool any_intercepted = false;
+				bool none_intercepted = true;
 				for (int i = 0; i < face_dist.length(); ++i) {
 					if (face_dist[i].isPresent) {
-						if (!any_intercepted || face_dist[i].value < min_z) {
+						if (none_intercepted || face_dist[i].value < min_z) {
 							min_z = face_dist[i].value;
 						}
-						if (!any_intercepted || face_dist[i].value > max_z) {
+						if (none_intercepted || face_dist[i].value > max_z) {
 							max_z = face_dist[i].value;
 						}
-						any_intercepted = true;
+						none_intercepted = false;
 					}
 				}
-
-				if (any_intercepted) {
-					vec3 min_intercept = tail + dir * min_z;
-					vec3 max_intercept = tail + dir * max_z;
-					vec3 boundingBoxTraversal = max_intercept - min_intercept;
-					depth = length(boundingBoxTraversal);
-					vec3 textureTraversal = voxels_size * boundingBoxTraversal;
-					float voxelsTraversed = length(textureTraversal);
-					resolution = int(ceil(voxelsTraversed));
-				} else {
-					resolution = 0;
+				if (none_intercepted || max_z < 0) {
+					discard;
 				}
+			}
+
+			void getBoundingBoxTraversal(vec3 tail, vec3 dir, float min_z, float max_z, out vec3 boundingBoxTraversal) {
+				vec3 min_intercept = tail + dir * min_z;
+				vec3 max_intercept = tail + dir * max_z;
+				boundingBoxTraversal = max_intercept - min_intercept;
+			}
+
+			void getResolution(vec3 boundingBoxTraversal, vec3 textureSize, out int resolution) {
+				vec3 textureTraversal = textureSize * boundingBoxTraversal;
+				float voxelsTraversed = length(textureTraversal);
+				resolution = int(ceil(voxelsTraversed));
 			}
 
 			void main() {
-				float min_z, max_z, depth;
+				vec3 camera_ray;
+				reverse_project(tex_coord, inv_projection, camera_position, camera_ray);
+
+				float min_z, max_z;
+				intersectBoundingBox(camera_position, camera_ray, min_z, max_z);
+
+				vec3 boundingBoxTraversal;
+				getBoundingBoxTraversal(camera_position, camera_ray, min_z, max_z, boundingBoxTraversal);
+
 				int resolution;
-				intersectBoundingBox(tex_coord, pose, textureSize(voxels, 0), min_z, max_z, depth, resolution);
-				float perceived;
-				if (resolution > 0) {
-					float step_z = (max_z - min_z) / resolution;
-					float sum = 0.;
-					for (int i = 0; i < resolution; ++i) {
-						float z = min_z + (i + 0.5) * step_z;
-						vec3 rot_tex_coord;
-						rotate(vec3(tex_coord, z), pose, rot_tex_coord);
-						sum += texture(voxels, rot_tex_coord).x;
-					}
-					perceived = depth * sum / resolution;
-				} else {
-					perceived = 0.;
+				getResolution(boundingBoxTraversal, textureSize(voxels, 0), resolution);
+
+				float step_z = (max_z - min_z) / resolution;
+				float sum = 0;
+				for (int i = 0; i < resolution; ++i) {
+					float z = min_z + (i + 0.5) * step_z;
+					vec3 world_coord = camera_position + z * camera_ray;
+					sum += texture(voxels, world_coord).x;
 				}
-				color = vec4(vec3(perceived), 1.);
+
+				float depth = length(boundingBoxTraversal);
+				float perceived = depth * sum / resolution;
+				color = vec4(vec3(perceived), 1);
 			}
 		'''),
 	])
 
-	pose = numpy.float32([
-		[1., 0., 0., 0.],
-		[0., math.cos(math.pi/2.), -math.sin(math.pi/2.), 0.],
-		[0., math.sin(math.pi/2.), math.cos(math.pi/2.), 0.],
-		[0.0, 0., 0., 1.],
-	]).transpose()
-	prog.uniforms['pose'].write(pose)
-
-	frame_size = 512
-	fbo = ctx.framebuffer(ctx.renderbuffer((frame_size, frame_size), components=1))
+	fbo = ctx.framebuffer(ctx.renderbuffer(frame_size, components=1))
 	fbo.use()
 
-	triangle_slice_vertices = numpy.float32([(0., 0.), (0., 1.), (1., 0.), (1., 1.)])
+	triangle_slice_vertices = numpy.float32([(-1, -1), (-1, 1), (1, -1), (1, 1)])
 	vbo = ctx.buffer(triangle_slice_vertices)
 	vao = ctx.simple_vertex_array(prog, vbo, ['canvas_coord'])
-	vao.render(ModernGL.TRIANGLE_STRIP)
 
-	data = fbo.read(components=1, floats=True)
-	flipped_projection = numpy.frombuffer(data, dtype='float32').reshape(fbo.size)
-	projection = numpy.flipud(numpy.fliplr(flipped_projection))
-	cv2.imshow(WINNAME, projection * 4.)
+	projection_shape = tuple(reversed(fbo.size))
+	composite = numpy.zeros(projection_shape)
+	for (i, j) in itertools.product(range(8), repeat=2):
+		RELATIVE_REFLECTION_HEIGHT = 0.5
+		shift = numpy.float32([
+			[1, 0, 0, -i],
+			[0, 1, 0, -j],
+			[0, 0, 1, RELATIVE_REFLECTION_HEIGHT],
+			[0, 0, 0, 1],
+		])
+		stretch = numpy.float32([
+			[1, 0, 0, 0],
+			[0, 1, 0, 0],
+			[0, 0, (1 - RELATIVE_REFLECTION_HEIGHT) / QUEEN_HEIGHT, 0],
+			[0, 0, 0, 1],
+		])
+		piece_inv_pose = numpy.dot(numpy.dot(shift, stretch), inv_pose)
+		piece_inv_projection = numpy.dot(piece_inv_pose, ext_inv_camera_matrix)
+		camera_position = numpy.dot(piece_inv_pose, numpy.float32([0, 0, 0, 1]).reshape(4,1))
+
+		prog.uniforms['inv_projection'].write(piece_inv_projection[:3].transpose())
+		prog.uniforms['camera_position'].write(camera_position[:3])
+
+		ctx.clear(0., 0., 0.)
+		vao.render(ModernGL.TRIANGLE_STRIP)
+
+		data = fbo.read(components=1, floats=True)
+		projection = numpy.frombuffer(data, dtype='float32').reshape(projection_shape)
+
+		composite += projection
+
+	cv2.imshow(WINNAME, composite)
 	key = cv2.waitKey(0)
 
 
