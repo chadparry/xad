@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import chess
 import cv2
 import functools
 import itertools
@@ -8,6 +9,9 @@ import ModernGL
 import numpy
 import operator
 import scipy.stats
+
+import pose
+import size
 
 
 WINNAME = 'Chess Transcription'
@@ -81,34 +85,13 @@ def reflective_attenuation(idx, x, y, z):
 	return 0.3 if z <= 0 else 1.
 
 
-def main():
-	SQUARE_SIZE_MM = 57.15
-	QUEEN_HEIGHT = 85. / SQUARE_SIZE_MM
-	PAWN_HEIGHT = 50. / SQUARE_SIZE_MM
-	frame_size = (1280, 720)
-
-	# Projection found by findboard
-	camera_matrix = numpy.float32([
-		[890.53161571,   0.        , 639.5       ],
-		[  0.        , 890.53161571, 359.5       ],
-		[  0.        ,   0.        ,   1.        ],
-	])
-	rvec = numpy.float32([
-		[-0.00675746],
-		[-2.39299275],
-		[ 2.0511568 ],
-	])
-	tvec = numpy.float32([
-		[ 3.4839375 ],
-		[ 1.80433699],
-		[17.95692787],
-	])
-
-	rotation, jacobian = cv2.Rodrigues(rvec)
+def get_piece_heatmaps(frame_size, projection):
+	rotation, jacobian = cv2.Rodrigues(projection.pose.rvec)
 	inv_rotation = rotation.transpose()
-	inv_tvec = numpy.dot(inv_rotation, -tvec)
+	inv_tvec = numpy.dot(inv_rotation, -projection.pose.tvec)
 	inv_pose = numpy.vstack([numpy.hstack([inv_rotation, inv_tvec]), numpy.float32([0, 0, 0, 1])])
-	inv_camera_matrix = numpy.linalg.inv(camera_matrix)
+	inv_camera_matrix = numpy.linalg.inv(projection.cameraIntrinsics.cameraMatrix)
+	# Change the frame coordinates from (0, 0) - frame_size to (-1, -1) - (1, 1)
 	gl_scale = numpy.float32([
 		[frame_size[0] / 2., 0, 0],
 		[0, frame_size[1] / 2., 0],
@@ -258,10 +241,14 @@ def main():
 	vbo = ctx.buffer(triangle_slice_vertices)
 	vao = ctx.simple_vertex_array(prog, vbo, ['canvas_coord'])
 
-	projection_shape = tuple(reversed(fbo.size))
+	projection_shape = tuple(reversed(frame_size))
 
-	layers = []
-	for ((i, height), j) in itertools.product([(0, QUEEN_HEIGHT), (1, PAWN_HEIGHT), (6, PAWN_HEIGHT), (7, QUEEN_HEIGHT)], range(8)):
+	heatmaps = {}
+	for (piece, square) in itertools.product(chess.PIECE_TYPES, chess.SQUARES):
+		i = chess.square_rank(square)
+		j = chess.square_file(square)
+		height = size.HEIGHTS[piece]
+
 		RELATIVE_REFLECTION_HEIGHT = 0.5
 		shift = numpy.float32([
 			[1, 0, 0, -i],
@@ -288,11 +275,45 @@ def main():
 		vao.render(ModernGL.TRIANGLE_STRIP)
 
 		data = fbo.read(components=1, floats=True)
-		projection = numpy.frombuffer(data, dtype='float32').reshape(projection_shape)
+		heatmap = numpy.frombuffer(data, dtype='float32').reshape(projection_shape)
 
-		layers.append(projection)
+		heatmaps[(piece, square)] = heatmap
 
-	negative_layers = (1 - layer for layer in layers)
+	return heatmaps
+
+
+def main():
+	frame_size = (1280, 720)
+
+	# Projection found by findboard
+	projection = pose.Projection(
+		pose.CameraIntrinsics(
+			cameraMatrix=numpy.float32([
+				[890.53161571,   0.        , 639.5       ],
+				[  0.        , 890.53161571, 359.5       ],
+				[  0.        ,   0.        ,   1.        ],
+			]),
+			distCoeffs=None,
+		),
+		pose.Pose(
+			rvec=numpy.float32([
+				[-0.00675746],
+				[-2.39299275],
+				[ 2.0511568 ],
+			]),
+			tvec=numpy.float32([
+				[ 3.4839375 ],
+				[ 1.80433699],
+				[17.95692787],
+			])
+		),
+	)
+
+	heatmaps = get_piece_heatmaps(frame_size, projection)
+
+	negative_layers = (1 - heatmaps[(piece.piece_type, square)]
+		for (square, piece) in chess.Board().piece_map().items())
+	projection_shape = tuple(reversed(frame_size))
 	negative_composite = functools.reduce(operator.mul, negative_layers, numpy.ones(projection_shape))
 	composite = 1 - negative_composite
 	cv2.imshow(WINNAME, composite)
