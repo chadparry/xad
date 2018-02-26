@@ -245,14 +245,14 @@ def get_piece_heatmaps(frame_size, projection):
 
 	heatmaps = {}
 	for (piece, square) in itertools.product(chess.PIECE_TYPES, chess.SQUARES):
-		i = chess.square_rank(square)
-		j = chess.square_file(square)
+		rank_idx = chess.square_rank(square)
+		file_idx = chess.square_file(square)
 		height = size.HEIGHTS[piece]
 
 		RELATIVE_REFLECTION_HEIGHT = 0.5
 		shift = numpy.float32([
-			[1, 0, 0, -i],
-			[0, 1, 0, -j],
+			[1, 0, 0, -rank_idx],
+			[0, 1, 0, -file_idx],
 			[0, 0, 1, RELATIVE_REFLECTION_HEIGHT],
 			[0, 0, 0, 1],
 		])
@@ -280,6 +280,43 @@ def get_piece_heatmaps(frame_size, projection):
 		heatmaps[(piece, square)] = heatmap
 
 	return heatmaps
+
+
+def get_depths(projection):
+	rotation, jacobian = cv2.Rodrigues(projection.pose.rvec)
+	inv_rotation = rotation.transpose()
+	camera_position = numpy.dot(inv_rotation, -projection.pose.tvec)
+	(camera_x, camera_y) = camera_position[:2]
+
+	distances = []
+	for square in chess.SQUARES:
+		rank_idx = chess.square_rank(square)
+		file_idx = chess.square_file(square)
+		distance = math.sqrt((camera_x - rank_idx)**2 + (camera_y - file_idx)**2)
+		distances.append((distance, square))
+
+	order = sorted(distances)
+	depths = {square: idx for (idx, (distance, square)) in enumerate(order)}
+	return depths
+
+
+def get_diffs(frame_size, heatmaps, depths):
+	projection_shape = tuple(reversed(frame_size))
+	negative_composite = numpy.ones(projection_shape)
+	diffs = {}
+	pieces = sorted(chess.Board().piece_map().items(),
+		key=lambda piece_item: depths[piece_item[0]])
+	negative_layers = ((square, 1 - heatmaps[(piece.piece_type, square)])
+		for (square, piece) in pieces)
+	for (square, layer) in negative_layers:
+		next_negative_composite = negative_composite * layer
+		diff = negative_composite - next_negative_composite
+		normalized_diff = diff / diff.sum()
+		diffs[square] = normalized_diff
+		negative_composite = next_negative_composite
+		cv2.imshow(WINNAME, normalized_diff * 1000)
+		key = cv2.waitKey(0)
+	return diffs
 
 
 def main():
@@ -310,14 +347,8 @@ def main():
 	)
 
 	heatmaps = get_piece_heatmaps(frame_size, projection)
-
-	negative_layers = (1 - heatmaps[(piece.piece_type, square)]
-		for (square, piece) in chess.Board().piece_map().items())
-	projection_shape = tuple(reversed(frame_size))
-	negative_composite = functools.reduce(operator.mul, negative_layers, numpy.ones(projection_shape))
-	composite = 1 - negative_composite
-	cv2.imshow(WINNAME, composite)
-	key = cv2.waitKey(0)
+	depths = get_depths(projection)
+	diffs = get_diffs(frame_size, heatmaps, depths)
 
 
 if __name__ == "__main__":
