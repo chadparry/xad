@@ -34,18 +34,18 @@ def get_piece_voxels(horizontal_resolution, vertical_resolution):
 
 
 def get_voxel_weight(memoized_radial_attenuation, idx, coords):
-	getters = [memoized_radial_attenuation, height_attenuation, reflective_attenuation]
+	getters = [memoized_radial_attenuation, taper_attenuation, height_attenuation, reflective_attenuation]
 	factors = (getter(idx, *coords) for getter in getters)
 	weight = functools.reduce(operator.mul, factors, 1.)
 	return weight
 
 
 def get_horizontal_coord(h, horizontal_resolution):
-	return (h + 1) / float(horizontal_resolution + 1)
+	return (h + 1) / (horizontal_resolution + 1)
 
 
 def get_vertical_coord(v, vertical_resolution):
-	return (v - vertical_resolution) / float(vertical_resolution + 1)
+	return (v - vertical_resolution) / (vertical_resolution + 1)
 
 
 def get_coords(idx, horizontal_resolution, vertical_resolution):
@@ -58,7 +58,7 @@ def get_coords(idx, horizontal_resolution, vertical_resolution):
 
 def get_memoized_radial_attenuation(horizontal_resolution):
 	idxs = ((x, y) for y in range((horizontal_resolution + 1) // 2) for x in range(y + 1))
-	GAUSSION_DENOMINATOR = 1. - 2. * scipy.stats.norm.cdf(-numpy.linalg.norm((0.5, 0.5)) * GAUSSIAN_SCALE)
+	GAUSSION_DENOMINATOR = 1 - 2 * scipy.stats.norm.cdf(-numpy.linalg.norm((0.5, 0.5)) * GAUSSIAN_SCALE)
 	def get_clamped_gaussian(h):
 		return scipy.stats.norm.pdf(h * GAUSSIAN_SCALE) / GAUSSION_DENOMINATOR
 	memo = {(x, y):
@@ -77,8 +77,13 @@ def get_memoized_radial_attenuation(horizontal_resolution):
 	return memoized_radial_attenuation
 
 
-def height_attenuation(idx, x, y, z):
+def taper_attenuation(idx, x, y, z):
 	return 1 - abs(z) * math.sqrt((0.5 - x)**2 + (0.5 - y)**2)
+
+
+def height_attenuation(idx, x, y, z):
+	MIN_RELATIVE_HEIGHT = 9 / 11
+	return 1 - max(abs(z) - MIN_RELATIVE_HEIGHT, 0) / (1 - MIN_RELATIVE_HEIGHT)
 
 
 def reflective_attenuation(idx, x, y, z):
@@ -93,8 +98,8 @@ def get_piece_heatmaps(frame_size, projection):
 	inv_camera_matrix = numpy.linalg.inv(projection.cameraIntrinsics.cameraMatrix)
 	# Change the frame coordinates from (0, 0) - frame_size to (-1, -1) - (1, 1)
 	gl_scale = numpy.float32([
-		[frame_size[0] / 2., 0, 0],
-		[0, frame_size[1] / 2., 0],
+		[frame_size[0] / 2, 0, 0],
+		[0, frame_size[1] / 2, 0],
 		[0, 0, 1],
 	])
 	gl_shift = numpy.float32([
@@ -140,6 +145,7 @@ def get_piece_heatmaps(frame_size, projection):
 
 			uniform mat3 inv_projection;
 			uniform vec3 camera_position;
+			uniform vec3 piece_dimensions;
 			uniform sampler3D voxels;
 
 			in vec2 tex_coord;
@@ -217,7 +223,7 @@ def get_piece_heatmaps(frame_size, projection):
 
 				int resolution;
 				getResolution(boundingBoxTraversal, textureSize(voxels, 0), resolution);
-				float depth = length(boundingBoxTraversal);
+				float depth = length(boundingBoxTraversal * piece_dimensions);
 				float exp = depth / resolution;
 
 				float step_z = (max_z - min_z) / resolution;
@@ -245,21 +251,23 @@ def get_piece_heatmaps(frame_size, projection):
 
 	heatmaps = {}
 	for (piece, square) in itertools.product(chess.PIECE_TYPES, chess.SQUARES):
-		rank_idx = chess.square_rank(square)
-		file_idx = chess.square_file(square)
+		i = chess.square_file(square)
+		j = chess.square_rank(square)
 		height = size.HEIGHTS[piece]
 
+		# Transform the piece to a cube at the origin, to simplify the ray caster
 		RELATIVE_REFLECTION_HEIGHT = 0.5
+		piece_scale = height / (1 - RELATIVE_REFLECTION_HEIGHT)
 		shift = numpy.float32([
-			[1, 0, 0, -rank_idx],
-			[0, 1, 0, -file_idx],
+			[1, 0, 0, -i],
+			[0, 1, 0, -j],
 			[0, 0, 1, RELATIVE_REFLECTION_HEIGHT],
 			[0, 0, 0, 1],
 		])
 		stretch = numpy.float32([
 			[1, 0, 0, 0],
 			[0, 1, 0, 0],
-			[0, 0, (1 - RELATIVE_REFLECTION_HEIGHT) / height, 0],
+			[0, 0, 1 / piece_scale, 0],
 			[0, 0, 0, 1],
 		])
 		piece_inv_pose = numpy.dot(numpy.dot(shift, stretch), inv_pose)
@@ -268,8 +276,9 @@ def get_piece_heatmaps(frame_size, projection):
 
 		prog.uniforms['inv_projection'].write(piece_inv_projection[:3].transpose())
 		prog.uniforms['camera_position'].write(camera_position[:3])
+		prog.uniforms['piece_dimensions'].write(numpy.float32([1, 1, piece_scale]))
 
-		ctx.clear(0., 0., 0.)
+		ctx.clear()
 		# TODO: It would be possible to speed this up by shrinking the frame
 		# until it barely contains the bounding box
 		vao.render(ModernGL.TRIANGLE_STRIP)
@@ -290,9 +299,9 @@ def get_depths(projection):
 
 	distances = []
 	for square in chess.SQUARES:
-		rank_idx = chess.square_rank(square)
-		file_idx = chess.square_file(square)
-		distance = math.sqrt((camera_x - rank_idx)**2 + (camera_y - file_idx)**2)
+		i = chess.square_file(square)
+		j = chess.square_rank(square)
+		distance = math.sqrt((camera_x - i)**2 + (camera_y - j)**2)
 		distances.append((distance, square))
 
 	order = sorted(distances)
@@ -300,11 +309,11 @@ def get_depths(projection):
 	return depths
 
 
-def get_diffs(frame_size, heatmaps, depths):
+def get_diffs(frame_size, heatmaps, depths, board):
 	projection_shape = tuple(reversed(frame_size))
 	negative_composite = numpy.ones(projection_shape)
 	diffs = {}
-	pieces = sorted(chess.Board().piece_map().items(),
+	pieces = sorted(board.piece_map().items(),
 		key=lambda piece_item: depths[piece_item[0]])
 	negative_layers = ((square, 1 - heatmaps[(piece.piece_type, square)])
 		for (square, piece) in pieces)
@@ -326,29 +335,32 @@ def main():
 	projection = pose.Projection(
 		pose.CameraIntrinsics(
 			cameraMatrix=numpy.float32([
-				[890.53161571,   0.        , 639.5       ],
-				[  0.        , 890.53161571, 359.5       ],
+				[887.09763773,   0.        , 639.5       ],
+				[  0.        , 887.09763773, 359.5       ],
 				[  0.        ,   0.        ,   1.        ],
 			]),
-			distCoeffs=None,
+			distCoeffs=[0., 0., 0., 0., 0.],
 		),
 		pose.Pose(
 			rvec=numpy.float32([
-				[-0.00675746],
-				[-2.39299275],
-				[ 2.0511568 ],
+				[ 1.32300998],
+				[-1.32785091],
+				[ 1.14510022],
 			]),
 			tvec=numpy.float32([
-				[ 3.4839375 ],
-				[ 1.80433699],
-				[17.95692787],
+				[ 3.58316198],
+				[ 3.06215196],
+				[10.00036672],
 			])
 		),
 	)
 
 	heatmaps = get_piece_heatmaps(frame_size, projection)
 	depths = get_depths(projection)
-	diffs = get_diffs(frame_size, heatmaps, depths)
+	board = chess.Board()
+	diffs = get_diffs(frame_size, heatmaps, depths, board)
+	# TODO: Generate diffs of all legal moves
+	moves = board.legal_moves
 
 
 if __name__ == "__main__":
