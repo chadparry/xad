@@ -84,6 +84,7 @@ def reflective_attenuation(idx, x, y, z):
 def main():
 	SQUARE_SIZE_MM = 57.15
 	QUEEN_HEIGHT = 85. / SQUARE_SIZE_MM
+	PAWN_HEIGHT = 50. / SQUARE_SIZE_MM
 	frame_size = (1280, 720)
 
 	# Projection found by findboard
@@ -121,7 +122,7 @@ def main():
 	gl_inv_camera_matrix = numpy.dot(inv_camera_matrix, numpy.dot(gl_scale, gl_shift))
 	ext_inv_camera_matrix = numpy.vstack([gl_inv_camera_matrix, numpy.float32([0, 0, 1])])
 
-	horizontal_resolution, vertical_resolution = (60, 120)
+	horizontal_resolution, vertical_resolution = (12, 24)
 	voxels = get_piece_voxels(horizontal_resolution, vertical_resolution)
 
 	# This helper performs volume ray casting
@@ -159,7 +160,7 @@ def main():
 			uniform sampler3D voxels;
 
 			in vec2 tex_coord;
-			out vec4 color;
+			out float color;
 
 			void reverse_project(vec2 image_coord, mat3 rotation, vec3 camera_position, out vec3 camera_ray) {
 				vec3 hom_image_coord = vec3(image_coord, 1);
@@ -206,6 +207,7 @@ def main():
 				if (none_intercepted || max_z < 0) {
 					discard;
 				}
+				min_z = max(min_z, 0);
 			}
 
 			void getBoundingBoxTraversal(vec3 tail, vec3 dir, float min_z, float max_z, out vec3 boundingBoxTraversal) {
@@ -232,18 +234,19 @@ def main():
 
 				int resolution;
 				getResolution(boundingBoxTraversal, textureSize(voxels, 0), resolution);
+				float depth = length(boundingBoxTraversal);
+				float exp = depth / resolution;
 
 				float step_z = (max_z - min_z) / resolution;
-				float sum = 0;
+				float transparency = 1;
 				for (int i = 0; i < resolution; ++i) {
 					float z = min_z + (i + 0.5) * step_z;
 					vec3 world_coord = camera_position + z * camera_ray;
-					sum += texture(voxels, world_coord).x;
+					float voxel = texture(voxels, world_coord).x;
+					transparency *= pow(1 - voxel, exp);
 				}
 
-				float depth = length(boundingBoxTraversal);
-				float perceived = depth * sum / resolution;
-				color = vec4(vec3(perceived), 1);
+				color = 1 - transparency;
 			}
 		'''),
 	])
@@ -256,8 +259,9 @@ def main():
 	vao = ctx.simple_vertex_array(prog, vbo, ['canvas_coord'])
 
 	projection_shape = tuple(reversed(fbo.size))
-	composite = numpy.zeros(projection_shape)
-	for (i, j) in itertools.product(range(8), repeat=2):
+
+	layers = []
+	for ((i, height), j) in itertools.product([(0, QUEEN_HEIGHT), (1, PAWN_HEIGHT), (6, PAWN_HEIGHT), (7, QUEEN_HEIGHT)], range(8)):
 		RELATIVE_REFLECTION_HEIGHT = 0.5
 		shift = numpy.float32([
 			[1, 0, 0, -i],
@@ -268,7 +272,7 @@ def main():
 		stretch = numpy.float32([
 			[1, 0, 0, 0],
 			[0, 1, 0, 0],
-			[0, 0, (1 - RELATIVE_REFLECTION_HEIGHT) / QUEEN_HEIGHT, 0],
+			[0, 0, (1 - RELATIVE_REFLECTION_HEIGHT) / height, 0],
 			[0, 0, 0, 1],
 		])
 		piece_inv_pose = numpy.dot(numpy.dot(shift, stretch), inv_pose)
@@ -279,13 +283,18 @@ def main():
 		prog.uniforms['camera_position'].write(camera_position[:3])
 
 		ctx.clear(0., 0., 0.)
+		# TODO: It would be possible to speed this up by shrinking the frame
+		# until it barely contains the bounding box
 		vao.render(ModernGL.TRIANGLE_STRIP)
 
 		data = fbo.read(components=1, floats=True)
 		projection = numpy.frombuffer(data, dtype='float32').reshape(projection_shape)
 
-		composite += projection
+		layers.append(projection)
 
+	negative_layers = (1 - layer for layer in layers)
+	negative_composite = functools.reduce(operator.mul, negative_layers, numpy.ones(projection_shape))
+	composite = 1 - negative_composite
 	cv2.imshow(WINNAME, composite)
 	key = cv2.waitKey(0)
 
