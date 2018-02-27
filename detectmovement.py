@@ -250,10 +250,10 @@ def get_piece_heatmaps(frame_size, projection):
 	projection_shape = tuple(reversed(frame_size))
 
 	heatmaps = {}
-	for (piece, square) in itertools.product(chess.PIECE_TYPES, chess.SQUARES):
+	for (square, piece_type) in itertools.product(chess.SQUARES, chess.PIECE_TYPES):
 		i = chess.square_file(square)
 		j = chess.square_rank(square)
-		height = size.HEIGHTS[piece]
+		height = size.HEIGHTS[piece_type]
 
 		# Transform the piece to a cube at the origin, to simplify the ray caster
 		RELATIVE_REFLECTION_HEIGHT = 0.5
@@ -286,7 +286,7 @@ def get_piece_heatmaps(frame_size, projection):
 		data = fbo.read(components=1, floats=True)
 		heatmap = numpy.frombuffer(data, dtype='float32').reshape(projection_shape)
 
-		heatmaps[(piece, square)] = heatmap
+		heatmaps[(square, piece_type)] = heatmap
 
 	return heatmaps
 
@@ -309,23 +309,62 @@ def get_depths(projection):
 	return depths
 
 
-def get_diffs(frame_size, heatmaps, depths, board):
+def get_negative_composite(negative_composite_memo, heatmaps, sorted_pieces):
+	if sorted_pieces in negative_composite_memo:
+		return negative_composite_memo[sorted_pieces]
+
+	(sorted_pieces_tail, sorted_pieces_head) = (sorted_pieces[:-1], sorted_pieces[-1])
+	negative_composite_tail = get_negative_composite(negative_composite_memo, heatmaps, sorted_pieces_tail)
+	negative_composite_head = heatmaps[sorted_pieces_head]
+	negative_composite = negative_composite_tail * (1 - negative_composite_head)
+	negative_composite_memo[sorted_pieces] = negative_composite
+	return negative_composite
+
+
+def get_piece_diff(negative_composite_memo, heatmaps, depths, sorted_pieces, focal_piece):
+	depth = depths[focal_piece[0]]
+	occluding_pieces = tuple(itertools.takewhile(
+		lambda piece_item: depths[piece_item[0]] < depth,
+		sorted_pieces,
+	))
+	negative_composite = get_negative_composite(negative_composite_memo, heatmaps, occluding_pieces)
+	negative_layer = 1 - heatmaps[focal_piece]
+	combined_negative_composite = negative_composite * negative_layer
+	diff = 1 - (negative_composite - combined_negative_composite)
+	return diff
+
+
+def get_move_diffs(frame_size, heatmaps, depths, board):
 	projection_shape = tuple(reversed(frame_size))
-	negative_composite = numpy.ones(projection_shape)
-	diffs = {}
-	pieces = sorted(board.piece_map().items(),
+	negative_composite_memo = {(): numpy.ones(projection_shape)}
+	move_diffs = {}
+	sorted_pieces = sorted((
+		(piece_item[0], piece_item[1].piece_type)
+			for piece_item in board.piece_map().items()),
 		key=lambda piece_item: depths[piece_item[0]])
-	negative_layers = ((square, 1 - heatmaps[(piece.piece_type, square)])
-		for (square, piece) in pieces)
-	for (square, layer) in negative_layers:
-		next_negative_composite = negative_composite * layer
-		diff = negative_composite - next_negative_composite
-		normalized_diff = diff / diff.sum()
-		diffs[square] = normalized_diff
-		negative_composite = next_negative_composite
+	for move in board.legal_moves:
+		pieces_before = board.piece_map().items()
+		board.push(move)
+		try:
+			pieces_after = board.piece_map().items()
+		finally:
+			board.pop()
+		moved_pieces = pieces_before ^ pieces_after
+		piece_items = ((square, piece.piece_type) for (square, piece) in moved_pieces)
+		# FIXME: Do any of these diffs have to be considered in combination with each other?
+		piece_diffs = (get_piece_diff(negative_composite_memo, heatmaps, depths, sorted_pieces, piece_item)
+			for piece_item in piece_items)
+
+		combined_diff = 1 - functools.reduce(operator.mul, piece_diffs, numpy.ones(projection_shape))
+		combined_denominator = combined_diff.sum()
+		normalized_diff = combined_diff / combined_denominator if combined_denominator else combined_diff
+
+		move_diffs[move] = normalized_diff
+
+		print('move', board.san(move))
 		cv2.imshow(WINNAME, normalized_diff * 1000)
 		key = cv2.waitKey(0)
-	return diffs
+	return move_diffs
 
 
 def main():
@@ -358,9 +397,7 @@ def main():
 	heatmaps = get_piece_heatmaps(frame_size, projection)
 	depths = get_depths(projection)
 	board = chess.Board()
-	diffs = get_diffs(frame_size, heatmaps, depths, board)
-	# TODO: Generate diffs of all legal moves
-	moves = board.legal_moves
+	move_diffs = get_move_diffs(frame_size, heatmaps, depths, board)
 
 
 if __name__ == "__main__":
