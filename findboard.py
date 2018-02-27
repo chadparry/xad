@@ -45,30 +45,14 @@ def main():
 	webcam.set(cv2.CAP_PROP_POS_MSEC, 32000)
 	#webcam.set(cv2.CAP_PROP_POS_MSEC, 90000)
 
-	if True:
-		pattern_size = (7, 7)
-		refimgbw = cv2.imread('chessboard.png',0)
-		(retval, color2) = webcam.read()
-	elif False:
-		pattern_size = (6, 9)
-		refimgbw = cv2.imread('chessboard96.png',0)
-		color2 = cv2.imread('cameracalibrationandposeestimation_sample.jpg')
-	else:
-		pattern_size = (5, 7)
-		refimgbw = cv2.imread('chessboard75.png',0)
-		color2 = cv2.imread('chessboard_ready_for_calibration-sm.jpg')
+	pattern_size = (7, 7)
+	(retval, color2) = webcam.read()
 
 	img2 = cv2.cvtColor(color2, cv2.COLOR_BGR2GRAY)
 	#cv2.imshow(WINNAME, color2)
 	#key = cv2.waitKey(0)
 	global color_global
 	color_global = numpy.copy(color2)
-
-	refimg = cv2.cvtColor(refimgbw, cv2.COLOR_GRAY2BGR)
-	#cv2.imshow(WINNAME, refimg)
-	#key = cv2.waitKey(0)
-	#(found, ref_chess) = cv2.findChessboardCorners(refimg, pattern_size)
-	#ref_corners = [c[0] for c in ref_chess]
 
 	#(retval, color1) = webcam.read()
 	color1 = numpy.copy(color2)

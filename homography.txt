@@ -1,8 +1,0 @@
-Use sklearn.linear_model.RANSACRegressor to determine outliers.
-Use scipy.optimize with "method='lm'" (Levenberg-Marquardt algorithm) to fit the corners to a perspective.
-Calculate the score of each perspective the same as in cv2.findHomography, except that all points on the reference image (A+x, B+y) are considered equal to (x, y) for any integers A and B.
-Actually, there are two partitioned spaces, corresponding to light vs. dark squares. Some points match (0, 0) and some match (1, 0). For C in {0, 1}, all (2*A+C+x, 2*B+C+y) points are considered equivalent.
-
-
-Calculate the areas of the screen that would be "hot" for each legal move. (What about illegal moves?) When calculating hot areas, remember to occlude those areas by pieces that would be known to be in the way. Use cosine similarity (http://scikit-learn.org/dev/modules/generated/sklearn.metrics.pairwise.cosine_similarity.html) where each chess square is a dimension. Or better: just calculate the image similarity at pixel resolution rather than chess square resolution. The scores would have to be normalized so that a candidate move close to the camera doesn't have a better chance of being chosen. I also care about color changes though: Moves from one square to another mean that the color that left the other square appear in the new square.
-
