@@ -349,11 +349,11 @@ def get_move_diffs(frame_size, heatmaps, depths, board):
 			pieces_after = board.piece_map().items()
 		finally:
 			board.pop()
-		moved_pieces = pieces_before ^ pieces_after
-		piece_items = ((square, piece.piece_type) for (square, piece) in moved_pieces)
-		# FIXME: Do any of these diffs have to be considered in combination with each other?
-		piece_diffs = (get_piece_diff(negative_composite_memo, heatmaps, depths, sorted_pieces, piece_item)
-			for piece_item in piece_items)
+		moved_piece_items = pieces_before ^ pieces_after
+		moved_pieces = [(square, piece.piece_type) for (square, piece) in moved_piece_items]
+		stable_pieces = [piece for piece in sorted_pieces if piece not in moved_pieces]
+		piece_diffs = (get_piece_diff(negative_composite_memo, heatmaps, depths, stable_pieces, piece_item)
+			for piece_item in moved_pieces)
 
 		combined_diff = 1 - functools.reduce(operator.mul, piece_diffs, numpy.ones(projection_shape))
 		combined_denominator = combined_diff.sum()
