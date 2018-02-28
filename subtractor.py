@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import collections
 import cv2
@@ -127,7 +127,7 @@ while(1):
     #composite = (stablecmask / 2) + (stablergb / 2)
     stablergbhalf = stablergb / 2
     #composite = cv2.merge((stablergbhalf[...,0], stablergbhalf[...,1], stablecgray * 8))
-    composite = (stablergb / 2) + cv2.merge((stablecbins[0] / 2, z, z)) + cv2.merge((z, stablecbins[1] / 2, z)) + cv2.merge((z, z, stablecbins[2] / 2))
+    composite = (stablergb // 2) + cv2.merge((stablecbins[0] // 2, z, z)) + cv2.merge((z, stablecbins[1] // 2, z)) + cv2.merge((z, z, stablecbins[2] // 2))
     stablegray = cv2.cvtColor(stablergb, cv2.COLOR_BGR2GRAY)
     thresh = cv2.adaptiveThreshold(stablegray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,101,0)
     #im2, contours, hierarchy = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)

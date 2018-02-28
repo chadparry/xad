@@ -1,6 +1,4 @@
-#!/usr/bin/env python
-
-from __future__ import print_function
+#!/usr/bin/env python3
 
 import collections
 import colorsys
@@ -27,7 +25,7 @@ WINNAME = 'Chess Transcription'
 
 def grouper(iterable, n):
 	args = [iter(iterable)] * n
-	return zip(*args)
+	return list(zip(*args))
 
 color_global = None
 
@@ -63,7 +61,7 @@ def main():
 	corners = find_chessboard_corners(color2)
 	projection = get_projection(corners, color2.shape)
 
-	chess_grid = numpy.array([[[float(x), float(y), 0.] for y in xrange(9) for x in xrange(9)]])
+	chess_grid = numpy.array([[[float(x), float(y), 0.] for y in range(9) for x in range(9)]])
 	project_grid_points_result, j = cv2.projectPoints(chess_grid, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
 	project_grid_points = project_grid_points_result.reshape(9, 9, 2)
 
@@ -75,8 +73,8 @@ def main():
 		project_grid_points[0][-1],
 	]])
 	cv2.fillPoly(pimg, square, (255, 255, 255))
-	for y in xrange(8):
-		for x in xrange(8):
+	for y in range(8):
+		for x in range(8):
 			is_light = bool((x + y) % 2)
 			if is_light:
 				continue
@@ -102,39 +100,39 @@ def main():
 	rook_height = 55. / square_size_mm
 	pawn_height = 50. / square_size_mm
 
-	pieces_coord = numpy.array([[float(x) + 0.5, 0.5, float(z)] for x in xrange(0, 8) for z in [0., queen_height]])
+	pieces_coord = numpy.array([[float(x) + 0.5, 0.5, float(z)] for x in range(0, 8) for z in [0., queen_height]])
 	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
 	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
 
-	for pidx in xrange(8):
+	for pidx in range(8):
 		base = project_grid_points[pidx][0]
 		top = project_grid_points[pidx][1]
 		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (255,192,192), 15)
 
-	pieces_coord = numpy.array([[float(x) + 0.5, 1.5, float(z)] for x in xrange(0, 8) for z in [0., pawn_height]])
+	pieces_coord = numpy.array([[float(x) + 0.5, 1.5, float(z)] for x in range(0, 8) for z in [0., pawn_height]])
 	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
 	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
 
-	for pidx in xrange(8):
+	for pidx in range(8):
 		base = project_grid_points[pidx][0]
 		top = project_grid_points[pidx][1]
 		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (255,192,192), 15)
 
 
-	pieces_coord = numpy.array([[float(x) + 0.5, 7.5, float(z)] for x in xrange(0, 8) for z in [0., queen_height]])
+	pieces_coord = numpy.array([[float(x) + 0.5, 7.5, float(z)] for x in range(0, 8) for z in [0., queen_height]])
 	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
 	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
 
-	for pidx in xrange(8):
+	for pidx in range(8):
 		base = project_grid_points[pidx][0]
 		top = project_grid_points[pidx][1]
 		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (128,0,0), 15)
 
-	pieces_coord = numpy.array([[float(x) + 0.5, 6.5, float(z)] for x in xrange(0, 8) for z in [0., pawn_height]])
+	pieces_coord = numpy.array([[float(x) + 0.5, 6.5, float(z)] for x in range(0, 8) for z in [0., pawn_height]])
 	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
 	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
 
-	for pidx in xrange(8):
+	for pidx in range(8):
 		base = project_grid_points[pidx][0]
 		top = project_grid_points[pidx][1]
 		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (128,0,0), 15)
@@ -222,21 +220,21 @@ def find_chessboard_corners(image):
 	# If two quads overlap on 3 or more corners, then discard the one that was found
 	# first, which is the one found in the noiser image with the smaller block size and larger kernel size.
 	complementary = {left_idx: right_counts
-		for (left_idx, right_counts) in connected_indices.iteritems()
+		for (left_idx, right_counts) in connected_indices.items()
 		if any(
 				all(is_complementary_corner(pair[0], pair[1], contours, color2) for pair in connected_pairs)
-				for (right_idx, connected_pairs) in right_counts.iteritems())}
+				for (right_idx, connected_pairs) in right_counts.items())}
 	uniques = {left_idx: right_counts
-		for (left_idx, right_counts) in complementary.iteritems()
+		for (left_idx, right_counts) in complementary.items()
 		if all(
 			right_idx < left_idx or
 			right_idx not in complementary or
 			len(connected_pairs) < 3
-			for (right_idx, connected_pairs) in right_counts.iteritems())}
+			for (right_idx, connected_pairs) in right_counts.items())}
 
 
 	#print('UNIQUES', len(uniques), uniques)
-	connected_map = [left_idx for (left_idx, right_keys) in uniques.iteritems() if any(key in uniques for key in right_keys)]
+	connected_map = [left_idx for (left_idx, right_keys) in uniques.items() if any(key in uniques for key in right_keys)]
 	#print('CONN_MAP', len(connected_map), connected_map)
 	reverse_connected_map = {old_idx: new_idx for (new_idx, old_idx) in enumerate(connected_map)}
 	quads = [contours[left_idx] for left_idx in connected_map]
@@ -570,7 +568,7 @@ def find_chessboard_corners(image):
 	# FIXME: Scanning the quads should not be necessary to filter.
 	#inlier_quads = [quad for (idx, quad) in enumerate(quads + quads_rot)
 	#	if regressor.inlier_mask_[idx] and idx % len(quads) in filtered_inlier_indices]
-	inlier_quads_filter = [regressor.inlier_mask_[idx] and idx % len(quads) in filtered_inlier_indices for idx in xrange(len(quads) + len(quads_rot))]
+	inlier_quads_filter = [regressor.inlier_mask_[idx] and idx % len(quads) in filtered_inlier_indices for idx in range(len(quads) + len(quads_rot))]
 	inlier_quads = list(itertools.compress(quads + quads_rot, inlier_quads_filter))
 	is_light_inlier_quads = list(itertools.compress(is_light_quads * 2, inlier_quads_filter))
 	cv2.imshow(WINNAME, working)
@@ -970,7 +968,7 @@ def find_chessboard_corners(image):
 			for (x, y) in ((int(round(cp[0])), int(round(cp[1]))) for cp in corners_row)]
 			for corners_row in corners]
 	debugimg = numpy.array([[(cell / 10, cell / 10, cell / 10) for cell in row] for row in corner_orientation])
-	edge_scores = [[get_edge_likelihood((x, y), corners, corner_orientation) for x in xrange(corners.shape[1] * 2 - 1)] for y in xrange(corners.shape[0] * 2 - 1)]
+	edge_scores = [[get_edge_likelihood((x, y), corners, corner_orientation) for x in range(corners.shape[1] * 2 - 1)] for y in range(corners.shape[0] * 2 - 1)]
 	#print('edges', numpy.array_str(numpy.array(edge_scores)))
 	max_edge_scores = rolling_sum(edge_scores, 17)
 	#print('max', numpy.array_str(max_edge_scores))
@@ -990,8 +988,8 @@ def find_chessboard_corners(image):
 
 	#pimg = numpy.array([[tuple(reversed(colorsys.hls_to_rgb(cell, 0.5, 1.))) for cell in row] for row in corner_orientation])
 	pimg = numpy.copy(debugimg)
-	for y in xrange(project_grid_points.shape[0]):
-		for x in xrange(project_grid_points.shape[1]):
+	for y in range(project_grid_points.shape[0]):
+		for x in range(project_grid_points.shape[1]):
 			cp = project_grid_points[y][x]
 			grid_color = (0, 1., 0)
 			try:
@@ -1003,8 +1001,8 @@ def find_chessboard_corners(image):
 			cv2.circle(pimg, (int(round(cp[0])), int(round(cp[1]))), 4, grid_color)
 	for bp in best_corners.reshape(best_corners.shape[0] * best_corners.shape[1], best_corners.shape[2]):
 		cv2.circle(pimg, (int(round(bp[0])), int(round(bp[1]))), 4, (0, 255, 255))
-	for y in xrange(project_grid_points.shape[0]):
-		for x in xrange(project_grid_points.shape[1]):
+	for y in range(project_grid_points.shape[0]):
+		for x in range(project_grid_points.shape[1]):
 			cp = project_grid_points[y][x]
 			try:
 				score = aligned_max_edge_scores[y][x]
@@ -1023,7 +1021,7 @@ def find_chessboard_corners(image):
 
 
 	if is_offset_board:
-		best_corners = numpy.array([[best_corners[y][x] for y in xrange(9)] for x in xrange(8, -1, -1)])
+		best_corners = numpy.array([[best_corners[y][x] for y in range(9)] for x in range(8, -1, -1)])
 
 	return best_corners
 
@@ -1035,7 +1033,7 @@ def get_projection(corners, shape):
 	default_mtx = numpy.array([[fx, 0, (w - 1)/2.], [0, fy, (h - 1)/2.], [0, 0, 1]]).astype('float32')
 
 	best_corners_input = corners.reshape(1, 81, 2).astype('float32')
-	rotated_grid = numpy.float32([[[float(x), float(y), 0.] for x in xrange(9) for y in xrange(9)]])
+	rotated_grid = numpy.float32([[[float(x), float(y), 0.] for x in range(9) for y in range(9)]])
 	err, cameraMatrix, distCoeffs, rvecs, tvecs = cv2.calibrateCamera(
 		rotated_grid,
 		best_corners_input,
@@ -1172,7 +1170,7 @@ def filter_quads(contours):
 
 
 def get_dilated_kernel_hull(kernel):
-	kernel_cloud = [(kpx - kernel.shape[0]/2, kpy - kernel.shape[1]/2)
+	kernel_cloud = [(kpx - kernel.shape[0]//2, kpy - kernel.shape[1]//2)
 		for kpx in range(kernel.shape[0]) for kpy in range(kernel.shape[1])
 		if kernel[(kpx,kpy)]]
 	kernel_hull = [p[0] for p in cv2.convexHull(numpy.array(kernel_cloud))]
@@ -1313,7 +1311,7 @@ def line_intersection(a, b):
 def get_perimeter(contour):
 	(left, right, wrap) = itertools.tee(contour, 3)
 	next(right, None)
-	pairs = itertools.izip(left, itertools.chain(right, wrap))
+	pairs = zip(left, itertools.chain(right, wrap))
 	return sum(numpy.linalg.norm(end - start) for (start, end) in pairs)
 
 
