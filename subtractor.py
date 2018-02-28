@@ -150,6 +150,7 @@ while(1):
     if k == 27:
         break
     if k == ord(' '):
+        cv2.imwrite('subtractor.png', stablecgray)
         lastmovelab = stablelab
 
 cap.release()

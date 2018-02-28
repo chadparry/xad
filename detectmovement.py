@@ -15,7 +15,7 @@ import size
 
 
 WINNAME = 'Chess Transcription'
-GAUSSIAN_SCALE = 3.
+GAUSSIAN_SCALE = 4.
 
 
 def get_piece_voxels(horizontal_resolution, vertical_resolution):
@@ -87,7 +87,7 @@ def height_attenuation(idx, x, y, z):
 
 
 def reflective_attenuation(idx, x, y, z):
-	return 0.3 if z <= 0 else 1.
+	return 0.3 if z < 0 else 1.
 
 
 def get_piece_heatmaps(frame_size, projection):
@@ -309,6 +309,18 @@ def get_depths(projection):
 	return depths
 
 
+def normalize_diff(diff):
+	"""The diff will be normalized so the average is zero and the standard deviation is one"""
+	diff_sum = diff.sum()
+	if diff_sum:
+		centered_diff = diff - diff_sum / diff.size
+		standard_deviation = math.sqrt((centered_diff**2).sum() / diff.size)
+		normalized_diff = centered_diff / standard_deviation
+	else:
+		normalized_diff = diff
+	return normalized_diff
+
+
 def get_negative_composite(negative_composite_memo, heatmaps, sorted_pieces):
 	if sorted_pieces in negative_composite_memo:
 		return negative_composite_memo[sorted_pieces]
@@ -352,18 +364,13 @@ def get_move_diffs(frame_size, heatmaps, depths, board):
 		moved_piece_items = pieces_before ^ pieces_after
 		moved_pieces = [(square, piece.piece_type) for (square, piece) in moved_piece_items]
 		stable_pieces = [piece for piece in sorted_pieces if piece not in moved_pieces]
-		piece_diffs = (get_piece_diff(negative_composite_memo, heatmaps, depths, stable_pieces, piece_item)
-			for piece_item in moved_pieces)
+		piece_diffs = [get_piece_diff(negative_composite_memo, heatmaps, depths, stable_pieces, piece_item)
+			for piece_item in moved_pieces]
 
-		combined_diff = 1 - functools.reduce(operator.mul, piece_diffs, numpy.ones(projection_shape))
-		combined_denominator = combined_diff.sum()
-		normalized_diff = combined_diff / combined_denominator if combined_denominator else combined_diff
-
+		combined_diff = 1 - numpy.prod(piece_diffs, axis=0)
+		normalized_diff = normalize_diff(combined_diff)
 		move_diffs[move] = normalized_diff
 
-		print('move', board.san(move))
-		cv2.imshow(WINNAME, normalized_diff * 1000)
-		key = cv2.waitKey(0)
 	return move_diffs
 
 
@@ -378,7 +385,7 @@ def main():
 				[  0.        , 887.09763773, 359.5       ],
 				[  0.        ,   0.        ,   1.        ],
 			]),
-			distCoeffs=[0., 0., 0., 0., 0.],
+			distCoeffs=numpy.float32([0., 0., 0., 0., 0.]),
 		),
 		pose.Pose(
 			rvec=numpy.float32([
@@ -394,10 +401,22 @@ def main():
 		),
 	)
 
+	subtractor = cv2.imread('diff.png')[:,:,0]
+	normalized_subtractor = normalize_diff(subtractor)
+
 	heatmaps = get_piece_heatmaps(frame_size, projection)
 	depths = get_depths(projection)
 	board = chess.Board()
 	move_diffs = get_move_diffs(frame_size, heatmaps, depths, board)
+	for (move, move_diff) in move_diffs.items():
+		# The Pearson correlation coefficient measures the goodness of fit
+		score = (move_diff * normalized_subtractor).mean()
+		print('score', board.san(move), score)
+		composite = numpy.zeros((720, 1280, 3), dtype='float32')
+		composite[:,:,2] += move_diff
+		composite[:,:,1] += normalized_subtractor
+		cv2.imshow(WINNAME, composite / 20)
+		key = cv2.waitKey(0)
 
 
 if __name__ == "__main__":
