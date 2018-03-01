@@ -22,34 +22,22 @@ def bin2mask(img):
 
 
 def get_stable(lastmovelab, history):
-	# TODO: Use exponential backoff
-	RELAXED_HISTORY_LEN = 3
-
 	latestlab = history[0]
 	movements = numpy.zeros(lastmovelab.shape, dtype=numpy.uint32)
-	movementsr = movements
 	for (cidx, c) in itertools.islice(enumerate(history), 1, None):
 		moved = cv2.absdiff(c, latestlab)
-		movements = movements + moved
-		if cidx <= RELAXED_HISTORY_LEN - 1:
-			movementsr = movements
-
+		weight = 1 / cidx
+		movements = movements + moved * weight
 	movementsmag = lab2mag(movements)
-	movementsmagr = lab2mag(movementsr)
 
-	threshold = 16 * math.sqrt(len(history)) if history else 1
+	total_weight = math.log(len(history)) + numpy.euler_gamma
+	threshold = total_weight * 2
 	(ret, estbinf) = cv2.threshold(movementsmag, threshold, 255, cv2.THRESH_BINARY_INV)
 	estbin = estbinf.astype(numpy.uint8)
 	opened = cv2.morphologyEx(estbin, cv2.MORPH_OPEN, EST_OPEN_KERNEL)
 	estmask = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, EST_CLOSE_KERNEL)
 
-	thresholdr = 8 * math.sqrt(min(len(history), RELAXED_HISTORY_LEN)) if history else 1
-	(ret, relaxedgray) = cv2.threshold(movementsmagr, thresholdr, 255, cv2.THRESH_BINARY_INV)
-	relaxedmask = relaxedgray.astype(numpy.uint8)
-	mask = cv2.bitwise_and(estmask, relaxedmask)
-	closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, STABLE_CLOSE_KERNEL)
-
-	changedmask = bin2mask(closed)
+	changedmask = bin2mask(estmask)
 	newstablelab = cv2.bitwise_and(latestlab, changedmask)
 	invmask = cv2.bitwise_not(changedmask)
 	holelab = cv2.bitwise_and(lastmovelab, invmask)
