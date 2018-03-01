@@ -14,11 +14,12 @@ Particle = collections.namedtuple('Particle', ['weight', 'board', 'stablelab', '
 
 
 EXPECTED_CORRELATION = 0.3
+MAX_WEIGHT_RATIO = 0.95
 HISTORY_LEN = 10
 
 
-def get_particle_key(particle):
-	return particle.board.fen()
+def get_board_key(board):
+	return board.fen()
 
 
 def main():
@@ -55,20 +56,24 @@ def main():
 	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
 
 	frame_size = tuple(reversed(firstlab.shape[:-1]))
+	projection_shape = tuple(reversed(frame_size))
 	heatmaps = detectmovement.get_piece_heatmaps(frame_size, projection)
 	depths = detectmovement.get_depths(projection)
-	firstboard = chess.Board()
-	first_move_diffs = detectmovement.get_move_diffs(frame_size, heatmaps, depths, firstboard)
+	first_board = chess.Board()
+	negative_composite_memo = {(): numpy.ones(projection_shape)}
+	first_move_diffs = detectmovement.get_move_diffs(heatmaps, depths, negative_composite_memo, first_board)
 	first_weight = 1.
-	first_particle = Particle(first_weight, firstboard, firstlab, first_move_diffs)
-	particles = {get_particle_key(first_particle): first_particle}
-	threshold_weight = first_weight / 2
+	first_particle = Particle(first_weight, first_board, firstlab, first_move_diffs)
+	particles = {get_board_key(first_board): first_particle}
+	threshold_weight = first_weight * MAX_WEIGHT_RATIO
 
 	history = collections.deque()
 	while True:
 		ret, framergb = cap.read()
 		if framergb is None:
 			break
+		cv2.imshow('frame', framergb)
+		key = cv2.waitKey(1)
 		framelab = cv2.cvtColor(framergb, cv2.COLOR_BGR2LAB)
 
 		history.appendleft(framelab)
@@ -81,6 +86,7 @@ def main():
 		stablelab = subtractor.get_stable(firstlab, history)
 
 		# FIXME: The particles are being updated inside this loop
+		# Instead, create a separate collection for the next generation of particles
 		for particle in list(particles.values()):
 
 			stablec = cv2.absdiff(stablelab, particle.stablelab)
@@ -90,18 +96,24 @@ def main():
 				# The Pearson correlation coefficient measures the goodness of fit
 				score = (move_diff * normalized_subtractor).mean()
 				weight = particle.weight * (score + 1 - EXPECTED_CORRELATION)
+				if weight < threshold_weight:
+					#print('  rejected candidate', weight, chess.Board().variation_san(nextboard.move_stack))
+					continue
 				nextboard = particle.board.copy()
 				nextboard.push(move)
-				if weight < threshold_weight:
-					print('  rejected candidate', weight, chess.Board().variation_san(nextboard.move_stack))
-					continue
-				#print('getting diffs');
-				next_move_diffs = detectmovement.get_move_diffs(frame_size, heatmaps, depths, nextboard)
-				#print('got diffs');
-				next_particle = Particle(weight, nextboard, stablelab, next_move_diffs)
-				next_particle_key = get_particle_key(next_particle)
+				next_particle_key = get_board_key(nextboard)
 				existing_particle = particles.get(next_particle_key)
-				if existing_particle is None or existing_particle.weight < next_particle.weight:
+				if existing_particle is None:
+					print('    getting diffs');
+					next_move_diffs = detectmovement.get_move_diffs(heatmaps, depths, negative_composite_memo, nextboard)
+					print('    got diffs');
+					print('    negative_composite_memo', len(negative_composite_memo))
+					next_particle = Particle(weight, nextboard, stablelab, next_move_diffs)
+					particles[next_particle_key] = next_particle
+					print('  accepted candidate', weight, chess.Board().variation_san(nextboard.move_stack))
+				elif existing_particle.weight < weight:
+					next_particle = Particle(weight, nextboard, stablelab, existing_particle.diffs)
+					particles[next_particle_key] = next_particle
 					particles[next_particle_key] = next_particle
 					print('  accepted candidate', weight, chess.Board().variation_san(nextboard.move_stack))
 				else:
@@ -109,8 +121,10 @@ def main():
 
 		# Resample by removing low-weighted particles
 		max_weight = max(particle.weight for particle in particles.values())
-		threshold_weight = max_weight / 2
+		threshold_weight = max_weight * MAX_WEIGHT_RATIO
+		#print('threshold_weight', threshold_weight)
 		particles = {key: particle for (key, particle) in particles.items() if particle.weight >= threshold_weight}
+		print('negative_composite_memo', len(negative_composite_memo))
 		print('particles', len(particles))
 		for particle in sorted(particles.values(), key=lambda particle: particle.weight, reverse=True):
 			print(' ', particle.weight, chess.Board().variation_san(particle.board.move_stack))

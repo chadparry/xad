@@ -323,7 +323,9 @@ def normalize_diff(diff):
 
 def get_negative_composite(negative_composite_memo, heatmaps, sorted_pieces):
 	if sorted_pieces in negative_composite_memo:
+		#print('        CACHE HIT ', sorted_pieces)
 		return negative_composite_memo[sorted_pieces]
+	#print('        CACHE MISS', sorted_pieces)
 
 	(sorted_pieces_tail, sorted_pieces_head) = (sorted_pieces[:-1], sorted_pieces[-1])
 	negative_composite_tail = get_negative_composite(negative_composite_memo, heatmaps, sorted_pieces_tail)
@@ -346,9 +348,7 @@ def get_piece_diff(negative_composite_memo, heatmaps, depths, sorted_pieces, foc
 	return diff
 
 
-def get_move_diffs(frame_size, heatmaps, depths, board):
-	projection_shape = tuple(reversed(frame_size))
-	negative_composite_memo = {(): numpy.ones(projection_shape)}
+def get_move_diffs(heatmaps, depths, negative_composite_memo, board):
 	move_diffs = {}
 	sorted_pieces = sorted((
 		(piece_item[0], piece_item[1].piece_type)
@@ -407,7 +407,9 @@ def main():
 	heatmaps = get_piece_heatmaps(frame_size, projection)
 	depths = get_depths(projection)
 	board = chess.Board()
-	move_diffs = get_move_diffs(frame_size, heatmaps, depths, board)
+	projection_shape = tuple(reversed(frame_size))
+	negative_composite_memo = {(): numpy.ones(projection_shape)}
+	move_diffs = get_move_diffs(heatmaps, depths, negative_composite_memo, board)
 	for (move, move_diff) in move_diffs.items():
 		# The Pearson correlation coefficient measures the goodness of fit
 		score = (move_diff * normalized_subtractor).mean()
