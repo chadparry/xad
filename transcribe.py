@@ -13,7 +13,7 @@ import detectmovement
 Particle = collections.namedtuple('Particle', ['weight', 'board', 'stablelab', 'diffs'])
 
 
-MIN_CORRELATION = 0.25
+MIN_CORRELATION = 0.35
 EXPECTED_CORRELATION = 0.5
 MAX_WEIGHT_RATIO = 0.75
 HISTORY_LEN = 10
