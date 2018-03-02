@@ -21,9 +21,9 @@ def bin2mask(img):
 	return cv2.merge([img] * 3)
 
 
-def get_stable(lastmovelab, history):
+def get_stable_mask(history):
 	latestlab = history[0]
-	movements = numpy.zeros(lastmovelab.shape, dtype=numpy.uint32)
+	movements = numpy.zeros(latestlab.shape, dtype=numpy.uint32)
 	for (cidx, c) in itertools.islice(enumerate(history), 1, None):
 		moved = cv2.absdiff(c, latestlab)
 		weight = 1 / cidx
@@ -36,14 +36,8 @@ def get_stable(lastmovelab, history):
 	estbin = estbinf.astype(numpy.uint8)
 	opened = cv2.morphologyEx(estbin, cv2.MORPH_OPEN, EST_OPEN_KERNEL)
 	estmask = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, EST_CLOSE_KERNEL)
-
-	changedmask = bin2mask(estmask)
-	newstablelab = cv2.bitwise_and(latestlab, changedmask)
-	invmask = cv2.bitwise_not(changedmask)
-	holelab = cv2.bitwise_and(lastmovelab, invmask)
-	stablelab = cv2.bitwise_or(holelab, newstablelab)
-
-	return stablelab
+	stable_mask = bin2mask(estmask)
+	return stable_mask
 
 
 def main():
@@ -82,7 +76,12 @@ def main():
 		if len(history) < HISTORY_LEN:
 			continue
 
-		stablelab = get_stable(lastmovelab, history)
+		stable_mask = get_stable_mask(history)
+		newstablelab = cv2.bitwise_and(framelab, stable_mask)
+		invmask = cv2.bitwise_not(stable_mask)
+		holelab = cv2.bitwise_and(lastmovelab, invmask)
+		stablelab = cv2.bitwise_or(holelab, newstablelab)
+
 
 		stablec = cv2.absdiff(stablelab, lastmovelab)
 		stablecgrayf = lab2mag(stablec)
