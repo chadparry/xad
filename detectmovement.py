@@ -291,6 +291,14 @@ def get_piece_heatmaps(frame_size, projection):
 	return heatmaps
 
 
+def get_reference_heatmap(heatmaps):
+	all_kings = (heatmaps[(square, chess.KING)] for square in chess.SQUARES)
+	negative_kings = [1 - heatmap for heatmap in all_kings]
+	combined_kings = 1 - numpy.prod(negative_kings, axis=0)
+	normalized_kings = combined_kings / combined_kings.sum()
+	return normalized_kings
+
+
 def get_depths(projection):
 	rotation, jacobian = cv2.Rodrigues(projection.pose.rvec)
 	inv_rotation = rotation.transpose()
@@ -309,11 +317,11 @@ def get_depths(projection):
 	return depths
 
 
-def normalize_diff(diff):
+def normalize_diff(reference_heatmap, diff):
 	"""The diff will be normalized so the average is zero and the standard deviation is one"""
 	diff_sum = diff.sum()
 	if diff_sum:
-		centered_diff = diff - diff_sum / diff.size
+		centered_diff = diff - diff_sum * reference_heatmap
 		standard_deviation = math.sqrt((centered_diff**2).sum() / diff.size)
 		normalized_diff = centered_diff / standard_deviation
 	else:
@@ -348,7 +356,7 @@ def get_piece_diff(negative_composite_memo, heatmaps, depths, sorted_pieces, foc
 	return diff
 
 
-def get_move_diffs(heatmaps, depths, negative_composite_memo, board):
+def get_move_diffs(heatmaps, reference_heatmap, depths, negative_composite_memo, board):
 	move_diffs = {}
 	sorted_pieces = sorted((
 		(piece_item[0], piece_item[1].piece_type)
@@ -368,7 +376,7 @@ def get_move_diffs(heatmaps, depths, negative_composite_memo, board):
 			for piece_item in moved_pieces]
 
 		combined_diff = 1 - numpy.prod(piece_diffs, axis=0)
-		normalized_diff = normalize_diff(combined_diff)
+		normalized_diff = normalize_diff(reference_heatmap, combined_diff)
 		move_diffs[move] = normalized_diff
 
 	return move_diffs
@@ -401,15 +409,17 @@ def main():
 		),
 	)
 
-	subtractor = cv2.imread('diff.png')[:,:,0]
-	normalized_subtractor = normalize_diff(subtractor)
-
 	heatmaps = get_piece_heatmaps(frame_size, projection)
+	reference_heatmap = get_reference_heatmap(heatmaps)
 	depths = get_depths(projection)
 	board = chess.Board()
 	projection_shape = tuple(reversed(frame_size))
 	negative_composite_memo = {(): numpy.ones(projection_shape)}
-	move_diffs = get_move_diffs(heatmaps, depths, negative_composite_memo, board)
+
+	subtractor = cv2.imread('diff.png')[:,:,0]
+	normalized_subtractor = normalize_diff(reference_heatmap, subtractor)
+
+	move_diffs = get_move_diffs(heatmaps, reference_heatmap, depths, negative_composite_memo, board)
 	for (move, move_diff) in move_diffs.items():
 		# The Pearson correlation coefficient measures the goodness of fit
 		score = (move_diff * normalized_subtractor).mean()

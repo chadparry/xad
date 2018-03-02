@@ -13,9 +13,9 @@ import detectmovement
 Particle = collections.namedtuple('Particle', ['weight', 'board', 'stablelab', 'diffs'])
 
 
-MIN_CORRELATION = 0.2
-EXPECTED_CORRELATION = 0.4
-MAX_WEIGHT_RATIO = 0.7
+MIN_CORRELATION = 0.25
+EXPECTED_CORRELATION = 0.5
+MAX_WEIGHT_RATIO = 0.75
 HISTORY_LEN = 10
 
 
@@ -83,10 +83,11 @@ def main():
 	frame_size = tuple(reversed(firstlab.shape[:-1]))
 	projection_shape = tuple(reversed(frame_size))
 	heatmaps = detectmovement.get_piece_heatmaps(frame_size, projection)
+	reference_heatmap = detectmovement.get_reference_heatmap(heatmaps)
 	depths = detectmovement.get_depths(projection)
 	first_board = chess.Board()
 	negative_composite_memo = {(): numpy.ones(projection_shape)}
-	first_move_diffs = detectmovement.get_move_diffs(heatmaps, depths, negative_composite_memo, first_board)
+	first_move_diffs = detectmovement.get_move_diffs(heatmaps, reference_heatmap, depths, negative_composite_memo, first_board)
 	first_weight = 1.
 	first_particle = Particle(first_weight, first_board, firstlab, first_move_diffs)
 	particles = {get_board_key(first_board): first_particle}
@@ -116,11 +117,13 @@ def main():
 		# Instead, create a separate collection for the next generation of particles
 		for particle in list(particles.values()):
 			frame_diff = cv2.absdiff(framelab, particle.stablelab)
-			stablec = cv2.bitwise_and(frame_diff, stable_mask)
-			stablecgray = subtractor.lab2mag(stablec)
+			stable_diff = cv2.bitwise_and(frame_diff, stable_mask)
+			stable_diff_gray = subtractor.lab2mag(stable_diff)
+			stable_diff_masked = stable_diff_gray * reference_heatmap
+
 			#cv2.imshow('frame', stablecgray / 255)
 			#key = cv2.waitKey(1)
-			normalized_subtractor = detectmovement.normalize_diff(stablecgray)
+			normalized_subtractor = detectmovement.normalize_diff(reference_heatmap, stable_diff_masked)
 
 			# The Pearson correlation coefficient measures the goodness of fit
 			scores = ((move, move_diff, (move_diff * normalized_subtractor).mean())
@@ -148,7 +151,7 @@ def main():
 
 			if existing_particle is None:
 				print('      getting diffs');
-				next_move_diffs = detectmovement.get_move_diffs(heatmaps, depths, negative_composite_memo, next_board)
+				next_move_diffs = detectmovement.get_move_diffs(heatmaps, reference_heatmap, depths, negative_composite_memo, next_board)
 				print('      got diffs');
 				print('      negative_composite_memo', len(negative_composite_memo))
 			elif existing_particle.weight < weight:
