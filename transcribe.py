@@ -60,7 +60,8 @@ def main():
 	corners = findboard.find_chessboard_corners(firstrgb)
 	projection = findboard.get_projection(corners, firstrgb.shape)
 
-	ret, firstrgb = cap.read()
+	#cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
+	#ret, firstrgb = cap.read()
 
 	# FIXME: Switch white and black
 	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
@@ -84,7 +85,7 @@ def main():
 	heatmaps = detectmovement.get_piece_heatmaps(frame_size, projection)
 	reference_heatmap = detectmovement.get_reference_heatmap(heatmaps)
 	cv2.imshow(WINNAME, reference_heatmap * 100000)
-	cv2.waitKey(1000)
+	cv2.waitKey(500)
 	first_board = chess.Board()
 	negative_composite_memo = {(): numpy.ones(projection_shape)}
 	first_move_diffs = detectmovement.get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, first_board)
@@ -103,7 +104,7 @@ def main():
 		if framergb is None:
 			break
 		cv2.imshow(WINNAME, framergb)
-		cv2.waitKey(100)
+		cv2.waitKey(1)
 		framelab = cv2.cvtColor(framergb, cv2.COLOR_BGR2LAB)
 
 		history.appendleft(framelab)
@@ -188,7 +189,7 @@ def main():
 					(255, 255, 255),
 				)
 				cv2.imshow(WINNAME, composite / 50)
-				cv2.waitKey(1000)
+				cv2.waitKey(250)
 
 		# Resample by removing low-weighted particles
 		max_weight = max(particle.weight for particle in particles.values())

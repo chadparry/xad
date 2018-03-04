@@ -345,7 +345,8 @@ def get_occlusions(heatmaps, projection):
 
 		ordered_squares = sorted([square_a, square_b], key=lambda square: depths[square])
 		occlusions[ordered_squares[1]].add(ordered_squares[0])
-	return {square: sorted(values, key=lambda square: depths[square]) for (square, values) in occlusions.items()}
+	return collections.defaultdict(list,
+		((square, sorted(values, key=lambda square: depths[square])) for (square, values) in occlusions.items()))
 
 
 def normalize_stdev(diff):
