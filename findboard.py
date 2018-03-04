@@ -142,6 +142,11 @@ def main():
 	key = cv2.waitKey(0)
 
 
+# TODO:
+# Find the vanishing point of each quad
+# Project them onto a Gaussian sphere
+# Use sklearn.cluster.DBSCAN to find two dense clusters
+# Those quads count as the inliers to find the chessboard
 def find_chessboard_corners(image):
 	color1 = numpy.copy(image)
 	color2 = numpy.copy(image)
@@ -1667,7 +1672,7 @@ def get_best_intersection_by_angle5_quads(quads, tol=math.pi/36000.):
 	is_first = True
 	for idx, quad in enumerate(quads):
 		#print('hypotheses', len(hypotheses), '{}/{}'.format(idx, len(quads)))
-		if len(hypotheses) > 10:
+		if len(hypotheses) > 10 and False:
 			working = numpy.copy(color_global)
 			for hypothesis in hypotheses:
 				#print('hypothesis err', hypothesis[0][0], hypothesis[1][0])

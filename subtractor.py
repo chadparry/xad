@@ -13,6 +13,9 @@ EST_CLOSE_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (32,32))
 STABLE_CLOSE_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
 
 
+WINNAME = 'Chess Transcription'
+
+
 def lab2mag(img):
 	return numpy.linalg.norm(img, axis=2) / math.sqrt(3)
 
@@ -87,8 +90,8 @@ def main():
 		stablecgrayf = lab2mag(stablec)
 		stablecgray = stablecgrayf.astype(numpy.uint8)
 
-		cv2.imshow('frame', stablecgray)
-		#cv2.imshow('frame', composite)
+		cv2.imshow(WINNAME, stablecgray)
+		#cv2.imshow(WINNAME, composite)
 
 		writer.write(stablecgray)
 		k = cv2.waitKey(1) & 0xff

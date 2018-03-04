@@ -18,6 +18,20 @@ WINNAME = 'Chess Transcription'
 GAUSSIAN_SCALE = 4.
 
 
+class Heatmap:
+	"""Allows multiplication on a very sparse matrix, more efficient for this case than scipy.sparse"""
+
+	def __init__(self, dense):
+		(y_coords, x_coords) = numpy.where(dense)
+		# TODO: Optimize the raycaster so it only creates the relevant part of the heatmap
+		self.slice = numpy.s_[y_coords.min():y_coords.max()+1,x_coords.min():x_coords.max()+1]
+		self.delegate = dense[self.slice]
+
+	def sum_product(self, other):
+		"""Performs element-wise multiplication with a matrix and returns the sum"""
+		return (self.delegate * other[self.slice]).sum()
+
+
 def get_piece_voxels(horizontal_resolution, vertical_resolution):
 	"""Plots a piece in a 3D matrix according to the likelihood that it appears in that location"""
 	# The vertical shape is doubled to make room for a reflection
@@ -91,11 +105,11 @@ def reflective_attenuation(idx, x, y, z):
 
 
 def get_piece_heatmaps(frame_size, projection):
-	rotation, jacobian = cv2.Rodrigues(projection.pose.rvec)
+	rotation, jacobian = cv2.Rodrigues(projection.pose.rvec.astype(numpy.float32))
 	inv_rotation = rotation.transpose()
-	inv_tvec = numpy.dot(inv_rotation, -projection.pose.tvec)
+	inv_tvec = numpy.dot(inv_rotation, -projection.pose.tvec.astype(numpy.float32))
 	inv_pose = numpy.vstack([numpy.hstack([inv_rotation, inv_tvec]), numpy.float32([0, 0, 0, 1])])
-	inv_camera_matrix = numpy.linalg.inv(projection.cameraIntrinsics.cameraMatrix)
+	inv_camera_matrix = numpy.linalg.inv(projection.cameraIntrinsics.cameraMatrix.astype(numpy.float32))
 	# Change the frame coordinates from (0, 0) - frame_size to (-1, -1) - (1, 1)
 	gl_scale = numpy.float32([
 		[frame_size[0] / 2, 0, 0],
@@ -317,13 +331,11 @@ def get_depths(projection):
 	return depths
 
 
-def normalize_diff(reference_heatmap, diff):
-	"""The diff will be normalized so the average is zero and the standard deviation is one"""
-	diff_sum = diff.sum()
-	if diff_sum:
-		centered_diff = diff - diff_sum * reference_heatmap
-		standard_deviation = math.sqrt((centered_diff**2).sum() / diff.size)
-		normalized_diff = centered_diff / standard_deviation
+def normalize_stdev(diff):
+	"""The diff will be normalized so the standard deviation is one"""
+	diff_stdev = diff.std()
+	if diff_stdev:
+		normalized_diff = diff / diff_stdev
 	else:
 		normalized_diff = diff
 	return normalized_diff
@@ -376,8 +388,8 @@ def get_move_diffs(heatmaps, reference_heatmap, depths, negative_composite_memo,
 			for piece_item in moved_pieces]
 
 		combined_diff = 1 - numpy.prod(piece_diffs, axis=0)
-		normalized_diff = normalize_diff(reference_heatmap, combined_diff)
-		move_diffs[move] = normalized_diff
+		normalized_diff = normalize_stdev(combined_diff)
+		move_diffs[move] = Heatmap(normalized_diff)
 
 	return move_diffs
 
@@ -417,7 +429,7 @@ def main():
 	negative_composite_memo = {(): numpy.ones(projection_shape)}
 
 	subtractor = cv2.imread('diff.png')[:,:,0]
-	normalized_subtractor = normalize_diff(reference_heatmap, subtractor)
+	normalized_subtractor = normalize_stdev(subtractor)
 
 	move_diffs = get_move_diffs(heatmaps, reference_heatmap, depths, negative_composite_memo, board)
 	for (move, move_diff) in move_diffs.items():
