@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import chess
+import collections
 import cv2
 import functools
 import itertools
@@ -331,6 +332,22 @@ def get_depths(projection):
 	return depths
 
 
+def get_occlusions(heatmaps, projection):
+	depths = get_depths(projection)
+	occlusions = collections.defaultdict(set)
+	for (square_a, square_b) in itertools.product(chess.SQUARES, repeat=2):
+		if square_a == square_b:
+			continue
+		(piece_a, piece_b) = [heatmaps[(square, chess.KING)] for square in (square_a, square_b)]
+		occlusion = (piece_a * piece_b).any()
+		if not occlusion:
+			continue
+
+		ordered_squares = sorted([square_a, square_b], key=lambda square: depths[square])
+		occlusions[ordered_squares[1]].add(ordered_squares[0])
+	return {square: sorted(values, key=lambda square: depths[square]) for (square, values) in occlusions.items()}
+
+
 def normalize_stdev(diff):
 	"""The diff will be normalized so the standard deviation is one"""
 	diff_stdev = diff.std()
@@ -355,12 +372,11 @@ def get_negative_composite(negative_composite_memo, heatmaps, sorted_pieces):
 	return negative_composite
 
 
-def get_piece_diff(negative_composite_memo, heatmaps, depths, sorted_pieces, focal_piece):
-	depth = depths[focal_piece[0]]
-	occluding_pieces = tuple(itertools.takewhile(
-		lambda piece_item: depths[piece_item[0]] < depth,
-		sorted_pieces,
-	))
+def get_piece_diff(negative_composite_memo, heatmaps, occlusions, stable_pieces, focal_piece):
+	stable_piece_map = dict(stable_pieces)
+	occluding_pieces = tuple((occluding_square, stable_piece_map[occluding_square])
+		for occluding_square in occlusions[focal_piece[0]]
+		if occluding_square in stable_piece_map)
 	negative_composite = get_negative_composite(negative_composite_memo, heatmaps, occluding_pieces)
 	negative_layer = 1 - heatmaps[focal_piece]
 	combined_negative_composite = negative_composite * negative_layer
@@ -368,12 +384,9 @@ def get_piece_diff(negative_composite_memo, heatmaps, depths, sorted_pieces, foc
 	return diff
 
 
-def get_move_diffs(heatmaps, reference_heatmap, depths, negative_composite_memo, board):
+def get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, board):
+	print('      getting diffs', len(list(board.legal_moves)));
 	move_diffs = {}
-	sorted_pieces = sorted((
-		(piece_item[0], piece_item[1].piece_type)
-			for piece_item in board.piece_map().items()),
-		key=lambda piece_item: depths[piece_item[0]])
 	for move in board.legal_moves:
 		pieces_before = board.piece_map().items()
 		board.push(move)
@@ -382,15 +395,17 @@ def get_move_diffs(heatmaps, reference_heatmap, depths, negative_composite_memo,
 		finally:
 			board.pop()
 		moved_piece_items = pieces_before ^ pieces_after
-		moved_pieces = [(square, piece.piece_type) for (square, piece) in moved_piece_items]
-		stable_pieces = [piece for piece in sorted_pieces if piece not in moved_pieces]
-		piece_diffs = [get_piece_diff(negative_composite_memo, heatmaps, depths, stable_pieces, piece_item)
+		moved_pieces = frozenset([(square, piece.piece_type) for (square, piece) in moved_piece_items])
+		stable_pieces = [(square, piece.piece_type)
+			for (square, piece) in board.piece_map().items()
+			if (square, piece) not in moved_pieces]
+		piece_diffs = [get_piece_diff(negative_composite_memo, heatmaps, occlusions, stable_pieces, piece_item)
 			for piece_item in moved_pieces]
 
 		combined_diff = 1 - numpy.prod(piece_diffs, axis=0)
 		normalized_diff = normalize_stdev(combined_diff)
 		move_diffs[move] = Heatmap(normalized_diff)
-
+	print('      got diffs');
 	return move_diffs
 
 
@@ -423,7 +438,7 @@ def main():
 
 	heatmaps = get_piece_heatmaps(frame_size, projection)
 	reference_heatmap = get_reference_heatmap(heatmaps)
-	depths = get_depths(projection)
+	occlusions = get_occlusions(heatmaps, projection)
 	board = chess.Board()
 	projection_shape = tuple(reversed(frame_size))
 	negative_composite_memo = {(): numpy.ones(projection_shape)}
@@ -431,7 +446,7 @@ def main():
 	subtractor = cv2.imread('diff.png')[:,:,0]
 	normalized_subtractor = normalize_stdev(subtractor)
 
-	move_diffs = get_move_diffs(heatmaps, reference_heatmap, depths, negative_composite_memo, board)
+	move_diffs = get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, board)
 	for (move, move_diff) in move_diffs.items():
 		# The Pearson correlation coefficient measures the goodness of fit
 		score = (move_diff * normalized_subtractor).mean()

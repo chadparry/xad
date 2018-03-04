@@ -67,6 +67,7 @@ def main():
 	frame_size = tuple(reversed(firstlab.shape[:-1]))
 	heatmaps = detectmovement.get_piece_heatmaps(frame_size, projection)
 	reference_heatmap = detectmovement.get_reference_heatmap(heatmaps)
+	occlusions = detectmovement.get_occlusions(heatmaps, projection)
 	rotation, jacobian = cv2.Rodrigues(projection.pose.rvec)
 	orig_pose = numpy.vstack([numpy.hstack([rotation, projection.pose.tvec]), numpy.float32([0, 0, 0, 1])])
 	flip2d = cv2.getRotationMatrix2D((4, 4), 180, 1)
@@ -84,10 +85,9 @@ def main():
 	reference_heatmap = detectmovement.get_reference_heatmap(heatmaps)
 	cv2.imshow(WINNAME, reference_heatmap * 100000)
 	cv2.waitKey(1000)
-	depths = detectmovement.get_depths(projection)
 	first_board = chess.Board()
 	negative_composite_memo = {(): numpy.ones(projection_shape)}
-	first_move_diffs = detectmovement.get_move_diffs(heatmaps, reference_heatmap, depths, negative_composite_memo, first_board)
+	first_move_diffs = detectmovement.get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, first_board)
 	first_weight = 1.
 	first_particle = Particle(first_weight, first_board, firstlab, first_move_diffs)
 	particles = {get_board_key(first_board): first_particle}
@@ -156,10 +156,7 @@ def main():
 			existing_particle = particles.get(next_particle_key)
 
 			if existing_particle is None:
-				print('      getting diffs');
-				next_move_diffs = detectmovement.get_move_diffs(heatmaps, reference_heatmap, depths, negative_composite_memo, next_board)
-				print('      got diffs');
-				print('      negative_composite_memo', len(negative_composite_memo))
+				next_move_diffs = detectmovement.get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, next_board)
 			elif existing_particle.weight < weight:
 				next_move_diffs = existing_particle.diffs
 			else:
@@ -200,7 +197,7 @@ def main():
 		particles = {key: particle for (key, particle) in particles.items() if particle.weight >= threshold_weight}
 		#print('negative_composite_memo', len(negative_composite_memo))
 		print('particles:', len(particles), ', diffs:', sum(len(particle.diffs) for particle in particles.values()),
-			#', unique diffs:', len(set(hashlib.sha224(diff).hexdigest() for particle in particles.values() for diff in particle.diffs.values()))
+			#', unique diffs:', len(set(hashlib.sha224(numpy.ascontiguousarray(diff.delegate)).hexdigest() for particle in particles.values() for diff in particle.diffs.values())),
 		)
 		for particle in sorted(particles.values(), key=lambda particle: particle.weight, reverse=True):
 			print('', particle.weight, chess.Board().variation_san(particle.board.move_stack))
