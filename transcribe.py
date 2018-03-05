@@ -32,7 +32,7 @@ def get_board_key(board):
 def main():
 	#cap = cv2.VideoCapture('idaho.webm')
 	#cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
-	## Game from https://www.youtube.com/watch?v=jOU3tmXgB8A
+	# Game from https://www.youtube.com/watch?v=jOU3tmXgB8A
 	#cap = cv2.VideoCapture('acerook.mp4')
 	#cap.set(cv2.CAP_PROP_POS_MSEC, 7000)
 	# Game from https://www.youtube.com/watch?v=aHZtDuUMK50
@@ -64,11 +64,6 @@ def main():
 	#ret, firstrgb = cap.read()
 
 	# FIXME: Switch white and black
-	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
-	frame_size = tuple(reversed(firstlab.shape[:-1]))
-	heatmaps = detectmovement.get_piece_heatmaps(frame_size, projection)
-	reference_heatmap = detectmovement.get_reference_heatmap(heatmaps)
-	occlusions = detectmovement.get_occlusions(heatmaps, projection)
 	rotation, jacobian = cv2.Rodrigues(projection.pose.rvec)
 	orig_pose = numpy.vstack([numpy.hstack([rotation, projection.pose.tvec]), numpy.float32([0, 0, 0, 1])])
 	flip2d = cv2.getRotationMatrix2D((4, 4), 180, 1)
@@ -83,12 +78,16 @@ def main():
 	frame_size = tuple(reversed(firstlab.shape[:-1]))
 	projection_shape = tuple(reversed(frame_size))
 	heatmaps = detectmovement.get_piece_heatmaps(frame_size, projection)
+	occlusions = detectmovement.get_occlusions(heatmaps, projection)
 	reference_heatmap = detectmovement.get_reference_heatmap(heatmaps)
-	cv2.imshow(WINNAME, reference_heatmap * 100000)
+	display_reference_heatmap = numpy.zeros(reference_heatmap.shape, dtype=numpy.float32)
+	display_reference_heatmap[reference_heatmap.slice] = reference_heatmap.delegate
+	cv2.imshow(WINNAME, display_reference_heatmap * 100000)
 	cv2.waitKey(500)
 	first_board = chess.Board()
-	negative_composite_memo = {(): numpy.ones(projection_shape)}
+	negative_composite_memo = {(): detectmovement.Heatmap.blank(projection_shape)}
 	first_move_diffs = detectmovement.get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, first_board)
+
 	first_weight = 1.
 	first_particle = Particle(first_weight, first_board, firstlab, first_move_diffs)
 	particles = {get_board_key(first_board): first_particle}
@@ -116,17 +115,19 @@ def main():
 		# FIXME: The particles are being updated inside this loop
 		# Instead, create a separate collection for the next generation of particles
 		for particle in list(particles.values()):
+			if not particle.diffs:
+				continue
+
 			frame_diff = cv2.absdiff(framelab, particle.stablelab)
 			stable_diff = cv2.bitwise_and(frame_diff, stable_mask)
 			stable_diff_gray = subtractor.lab2mag(stable_diff)
-			stable_diff_masked = stable_diff_gray * reference_heatmap
-			#cv2.imshow(WINNAME, stable_diff_masked * 1000)
-			#key = cv2.waitKey(1)
+			stable_diff_heatmap = detectmovement.Heatmap(stable_diff_gray)
+			stable_diff_masked = detectmovement.Heatmap.product_zeros([reference_heatmap, stable_diff_heatmap])
 
-			centered_subtractor = stable_diff_masked - reference_heatmap * stable_diff_masked.sum()
+			centered_subtractor = stable_diff_masked.subtract(reference_heatmap.reweight(stable_diff_masked.sum()))
 
 			# The Pearson correlation coefficient measures the goodness of fit
-			scores = ((move, move_diff, move_diff.sum_product(centered_subtractor))
+			scores = ((move, move_diff, move_diff.correlation(centered_subtractor))
 				for (move, move_diff) in particle.diffs.items())
 			# Each particle represents a hypothesis for which frame contains the next move
 			# Particles don't need to represent multiple alternative moves associated with a single frame,
@@ -134,11 +135,11 @@ def main():
 			best_move_item = max(scores, key=lambda item: item[2])
 			(best_move, best_move_diff, best_score) = best_move_item
 
-			subtractor_total_variance = (centered_subtractor**2).sum()
+			subtractor_total_variance = centered_subtractor.total_variance()
 			if subtractor_total_variance:
-				subtractor_denom = math.sqrt(subtractor_total_variance * centered_subtractor.size)
+				subtractor_denom = math.sqrt(subtractor_total_variance * centered_subtractor.size())
 			else:
-				subtractor_denom = centered_subtractor.size
+				subtractor_denom = centered_subtractor.size()
 			best_normalized_score = best_score / subtractor_denom
 
 			weight = particle.weight * (best_normalized_score + 1 - EXPECTED_CORRELATION)
@@ -171,7 +172,7 @@ def main():
 			if weight > max_weight:
 				composite = numpy.zeros(framergb.shape, dtype=numpy.float32)
 				composite[:,:,2][best_move_diff.slice] += best_move_diff.delegate
-				composite[:,:,1] += centered_subtractor * (centered_subtractor.size / subtractor_denom)
+				composite[:,:,1][centered_subtractor.slice] += centered_subtractor.delegate * (centered_subtractor.size() / subtractor_denom)
 				cv2.putText(
 					composite,
 					'SCORE: {:.3f}'.format(best_normalized_score),
@@ -198,7 +199,7 @@ def main():
 		particles = {key: particle for (key, particle) in particles.items() if particle.weight >= threshold_weight}
 		#print('negative_composite_memo', len(negative_composite_memo))
 		print('particles:', len(particles), ', diffs:', sum(len(particle.diffs) for particle in particles.values()),
-			#', unique diffs:', len(set(hashlib.sha224(numpy.ascontiguousarray(diff.delegate)).hexdigest() for particle in particles.values() for diff in particle.diffs.values())),
+			#', unique diffs:', len(set(hashlib.sha224(numpy.ascontiguousarray(diff.as_numpy())).hexdigest() for particle in particles.values() for diff in particle.diffs.values())),
 		)
 		for particle in sorted(particles.values(), key=lambda particle: particle.weight, reverse=True):
 			print('', particle.weight, chess.Board().variation_san(particle.board.move_stack))

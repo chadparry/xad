@@ -22,15 +22,128 @@ GAUSSIAN_SCALE = 4.
 class Heatmap:
 	"""Allows multiplication on a very sparse matrix, more efficient for this case than scipy.sparse"""
 
-	def __init__(self, dense):
-		(y_coords, x_coords) = numpy.where(dense)
-		# TODO: Optimize the raycaster so it only creates the relevant part of the heatmap
-		self.slice = numpy.s_[y_coords.min():y_coords.max()+1,x_coords.min():x_coords.max()+1]
-		self.delegate = dense[self.slice]
+	def __init__(self, delegate, init_slice=None, shape=None):
+		self.delegate = delegate
+		self.shape = self.delegate.shape if shape is None else shape
+		self.slice = numpy.s_[0:self.shape[0],0:self.shape[1]] if init_slice is None else init_slice
 
-	def sum_product(self, other):
-		"""Performs element-wise multiplication with a matrix and returns the sum"""
-		return (self.delegate * other[self.slice]).sum()
+	def as_sparse(self):
+		(y_coords, x_coords) = numpy.where(self.delegate)
+		y_start = y_coords.min()
+		y_stop = y_coords.max() + 1
+		x_start = x_coords.min()
+		x_stop = x_coords.max() + 1
+		sparse_delegate = self.delegate[y_start:y_stop,x_start:x_stop]
+		(y_offset, x_offset) = (s.start for s in self.slice)
+		sparser_slice = numpy.s_[y_start+y_offset:y_stop+y_offset,x_start+x_offset:x_stop+x_offset]
+		return Heatmap(sparse_delegate, sparser_slice, self.shape)
+
+	def sum(self):
+		return self.delegate.sum()
+
+	def negative(self):
+		return Heatmap(1 - self.delegate, self.slice, self.shape)
+
+	def reweight(self, weight):
+		return Heatmap(self.delegate * weight, self.slice, self.shape)
+
+	def total_variance(self):
+		return (self.delegate**2).sum()
+
+	def normalize_sum(self):
+		"""The returned heatmap will be normalized so the sum is one"""
+		return Heatmap(self.delegate / self.delegate.sum(), self.slice, self.shape)
+
+	def size(self):
+		return functools.reduce(operator.mul, self.shape, 1)
+
+	def normalize_stdev(self):
+		"""The returned heatmap will be normalized so the standard deviation is one"""
+		pixel_mean = self.delegate.sum() / self.size()
+		diff_stdev =  math.sqrt(((self.delegate - pixel_mean)**2).sum() / self.size())
+		if diff_stdev:
+			normalized_delegate = self.delegate / diff_stdev
+		else:
+			normalized_delegate = self.delegate
+		return Heatmap(normalized_delegate, self.slice, self.shape)
+
+	@staticmethod
+	def blank(projection_shape):
+		return Heatmap(numpy.float32([]).reshape((0,0)), numpy.s_[0:0,0:0], projection_shape)
+
+	@staticmethod
+	def blend(pieces):
+		return Heatmap.product_ones([piece.negative() for piece in pieces]).negative()
+
+	@staticmethod
+	def union(pieces):
+		nonempty_pieces = [piece for piece in pieces if any(s.start < s.stop for s in piece.slice)]
+		y_start = min(piece.slice[0].start for piece in nonempty_pieces)
+		y_stop = max(piece.slice[0].stop for piece in nonempty_pieces)
+		x_start = min(piece.slice[1].start for piece in nonempty_pieces)
+		x_stop = max(piece.slice[1].stop for piece in nonempty_pieces)
+		max_shape = max(piece.shape for piece in nonempty_pieces)
+		return ((y_stop - y_start, x_stop - x_start),
+			[numpy.s_[piece.slice[0].start-y_start:piece.slice[0].stop-y_start,piece.slice[1].start-x_start:piece.slice[1].stop-x_start]
+				for piece in pieces],
+			numpy.s_[y_start:y_stop,x_start:x_stop],
+			max_shape,
+		)
+
+	@staticmethod
+	def intersection(pieces):
+		y_start = max(piece.slice[0].start for piece in pieces)
+		y_stop = min(piece.slice[0].stop for piece in pieces)
+		x_start = max(piece.slice[1].start for piece in pieces)
+		x_stop = min(piece.slice[1].stop for piece in pieces)
+		min_shape = min(piece.shape for piece in pieces)
+		if y_stop <= y_start or x_stop <= x_start:
+			intersected = ((0, 0), [numpy.s_[0:0,0:0] for _ in pieces], numpy.s_[0:0,0:0], min_shape)
+		else:
+			intersected = ((y_stop - y_start, x_stop - x_start),
+				[numpy.s_[y_start-piece.slice[0].start:y_stop-piece.slice[0].start,x_start-piece.slice[1].start:x_stop-piece.slice[1].start]
+					for piece in pieces],
+				numpy.s_[y_start:y_stop,x_start:x_stop],
+				min_shape,
+			)
+		return intersected
+
+	@staticmethod
+	def product_ones(pieces):
+		(broadcast_shape, indices, combined_slice, combined_shape) = Heatmap.union(pieces)
+		combined = numpy.ones(broadcast_shape, dtype=numpy.float32)
+		for (piece, index) in zip(pieces, indices):
+			combined[index] *= piece.delegate
+		return Heatmap(combined, combined_slice, combined_shape)
+
+	@staticmethod
+	def product_zeros(pieces):
+		"""Performs element-wise multiplication and returns the sum"""
+		(broadcast_shape, indices, combined_slice, combined_shape) = Heatmap.intersection(pieces)
+		broadcasts = [piece.delegate[index] for (piece, index) in zip(pieces, indices)]
+		combined = numpy.prod(broadcasts, axis=0)
+		return Heatmap(combined, combined_slice, combined_shape)
+
+	def subtract(self, other):
+		(broadcast_shape, (index_self, index_other), combined_slice, combined_shape) = Heatmap.union([self, other])
+		combined = numpy.zeros(broadcast_shape, dtype=numpy.float32)
+		combined[index_self] = self.delegate
+		combined[index_other] -= other.delegate
+		return Heatmap(combined, combined_slice, combined_shape)
+
+	def subtract_ones(self, other):
+		(broadcast_shape, (index_self, index_other), combined_slice, combined_shape) = Heatmap.union([self, other])
+		combined = numpy.ones(broadcast_shape, dtype=numpy.float32)
+		combined[index_self] = self.delegate
+		combined[index_other] -= other.delegate
+		return Heatmap(combined, combined_slice, combined_shape)
+
+	def is_overlapping(self, other):
+		return numpy.any(Heatmap.product_zeros([self, other]).delegate)
+
+	def correlation(self, other):
+		"""Performs element-wise multiplication and returns the sum"""
+		return Heatmap.product_zeros([self, other]).sum()
 
 
 def get_piece_voxels(horizontal_resolution, vertical_resolution):
@@ -301,17 +414,15 @@ def get_piece_heatmaps(frame_size, projection):
 		data = fbo.read(components=1, floats=True)
 		heatmap = numpy.frombuffer(data, dtype='float32').reshape(projection_shape)
 
-		heatmaps[(square, piece_type)] = heatmap
+		# TODO: Optimize the raycaster so it only creates the relevant part of the heatmap
+		heatmaps[(square, piece_type)] = Heatmap(heatmap).as_sparse()
 
 	return heatmaps
 
 
 def get_reference_heatmap(heatmaps):
 	all_kings = (heatmaps[(square, chess.KING)] for square in chess.SQUARES)
-	negative_kings = [1 - heatmap for heatmap in all_kings]
-	combined_kings = 1 - numpy.prod(negative_kings, axis=0)
-	normalized_kings = combined_kings / combined_kings.sum()
-	return normalized_kings
+	return Heatmap.blend(all_kings).normalize_sum()
 
 
 def get_depths(projection):
@@ -339,24 +450,13 @@ def get_occlusions(heatmaps, projection):
 		if square_a == square_b:
 			continue
 		(piece_a, piece_b) = [heatmaps[(square, chess.KING)] for square in (square_a, square_b)]
-		occlusion = (piece_a * piece_b).any()
-		if not occlusion:
+		if not piece_a.is_overlapping(piece_b):
 			continue
 
 		ordered_squares = sorted([square_a, square_b], key=lambda square: depths[square])
 		occlusions[ordered_squares[1]].add(ordered_squares[0])
 	return collections.defaultdict(list,
 		((square, sorted(values, key=lambda square: depths[square])) for (square, values) in occlusions.items()))
-
-
-def normalize_stdev(diff):
-	"""The diff will be normalized so the standard deviation is one"""
-	diff_stdev = diff.std()
-	if diff_stdev:
-		normalized_diff = diff / diff_stdev
-	else:
-		normalized_diff = diff
-	return normalized_diff
 
 
 def get_negative_composite(negative_composite_memo, heatmaps, sorted_pieces):
@@ -368,7 +468,7 @@ def get_negative_composite(negative_composite_memo, heatmaps, sorted_pieces):
 	(sorted_pieces_tail, sorted_pieces_head) = (sorted_pieces[:-1], sorted_pieces[-1])
 	negative_composite_tail = get_negative_composite(negative_composite_memo, heatmaps, sorted_pieces_tail)
 	negative_composite_head = heatmaps[sorted_pieces_head]
-	negative_composite = negative_composite_tail * (1 - negative_composite_head)
+	negative_composite = Heatmap.product_ones([negative_composite_tail, negative_composite_head.negative()])
 	negative_composite_memo[sorted_pieces] = negative_composite
 	return negative_composite
 
@@ -379,14 +479,13 @@ def get_piece_diff(negative_composite_memo, heatmaps, occlusions, stable_pieces,
 		for occluding_square in occlusions[focal_piece[0]]
 		if occluding_square in stable_piece_map)
 	negative_composite = get_negative_composite(negative_composite_memo, heatmaps, occluding_pieces)
-	negative_layer = 1 - heatmaps[focal_piece]
-	combined_negative_composite = negative_composite * negative_layer
-	diff = 1 - (negative_composite - combined_negative_composite)
+	negative_layer = heatmaps[focal_piece].negative()
+	combined_negative_composite = Heatmap.product_ones([negative_composite, negative_layer])
+	diff = negative_composite.subtract_ones(combined_negative_composite)
 	return diff
 
 
 def get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, board):
-	print('      getting diffs', len(list(board.legal_moves)));
 	move_diffs = {}
 	for move in board.legal_moves:
 		pieces_before = board.piece_map().items()
@@ -400,13 +499,12 @@ def get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_m
 		stable_pieces = [(square, piece.piece_type)
 			for (square, piece) in board.piece_map().items()
 			if (square, piece) not in moved_pieces]
-		piece_diffs = [get_piece_diff(negative_composite_memo, heatmaps, occlusions, stable_pieces, piece_item)
-			for piece_item in moved_pieces]
+		piece_diffs = (get_piece_diff(negative_composite_memo, heatmaps, occlusions, stable_pieces, piece_item)
+			for piece_item in moved_pieces)
 
-		combined_diff = 1 - numpy.prod(piece_diffs, axis=0)
-		normalized_diff = normalize_stdev(combined_diff)
-		move_diffs[move] = Heatmap(normalized_diff)
-	print('      got diffs');
+		combined_diff = Heatmap.blend(piece_diffs)
+		normalized_diff = combined_diff.as_sparse().normalize_stdev()
+		move_diffs[move] = normalized_diff
 	return move_diffs
 
 
@@ -442,10 +540,10 @@ def main():
 	occlusions = get_occlusions(heatmaps, projection)
 	board = chess.Board()
 	projection_shape = tuple(reversed(frame_size))
-	negative_composite_memo = {(): numpy.ones(projection_shape)}
+	negative_composite_memo = {(): Heatmap.blank(projection_shape)}
 
 	subtractor = cv2.imread('diff.png')[:,:,0]
-	normalized_subtractor = normalize_stdev(subtractor)
+	normalized_subtractor = subtractor / subtractor.stdev()
 
 	move_diffs = get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, board)
 	for (move, move_diff) in move_diffs.items():
