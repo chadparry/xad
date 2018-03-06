@@ -19,7 +19,7 @@ Particle = collections.namedtuple('Particle', ['weight', 'board', 'stablelab', '
 MIN_CORRELATION = 0.35
 EXPECTED_CORRELATION = 0.5
 MAX_WEIGHT_RATIO = 0.75
-HISTORY_LEN = 10
+HISTORY_LEN = 8
 
 
 WINNAME = 'Chess Transcription'

@@ -27,13 +27,16 @@ def bin2mask(img):
 def get_stable_mask(history):
 	latestlab = history[0]
 	movements = numpy.zeros(latestlab.shape, dtype=numpy.uint32)
-	for (cidx, c) in itertools.islice(enumerate(history), 1, None):
+	for clogidx in itertools.count(1):
+		cidx = 2**clogidx - 1
+		if cidx >= len(history):
+			break
+		c = history[cidx]
 		moved = cv2.absdiff(c, latestlab)
-		weight = 1 / cidx
-		movements = movements + moved * weight
+		movements = movements + moved
 	movementsmag = lab2mag(movements)
 
-	total_weight = math.log(len(history)) + numpy.euler_gamma
+	total_weight = math.floor(math.log(len(history), 2))
 	threshold = total_weight * 2
 	(ret, estbinf) = cv2.threshold(movementsmag, threshold, 255, cv2.THRESH_BINARY_INV)
 	estbin = estbinf.astype(numpy.uint8)
