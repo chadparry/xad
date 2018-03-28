@@ -142,6 +142,18 @@ def main():
 	key = cv2.waitKey(0)
 
 
+def flip_sides(projection):
+	rotation, jacobian = cv2.Rodrigues(projection.pose.rvec)
+	orig_pose = numpy.vstack([numpy.hstack([rotation, projection.pose.tvec]), numpy.float32([0, 0, 0, 1])])
+	flip2d = cv2.getRotationMatrix2D((4, 4), 180, 1)
+	spin = numpy.vstack([numpy.hstack([flip2d[:,:2], numpy.float32([0, 0]).reshape(2,1), flip2d[:,2:]]), numpy.float32([[0, 0, 1, 0], [0, 0, 0, 1]])])
+	spin_pose = numpy.dot(orig_pose, spin)
+	spin_rotation = spin_pose[:3,:3]
+	spin_tvec = spin_pose[:3,3:]
+	spin_rvec, jacobian = cv2.Rodrigues(spin_rotation)
+	return pose.Projection(cameraIntrinsics=projection.cameraIntrinsics, pose=pose.Pose(spin_rvec, spin_tvec))
+
+
 # TODO:
 # Find the vanishing point of each quad
 # Project them onto a Gaussian sphere

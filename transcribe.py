@@ -64,15 +64,7 @@ def main():
 	#ret, firstrgb = cap.read()
 
 	# FIXME: Switch white and black
-	rotation, jacobian = cv2.Rodrigues(projection.pose.rvec)
-	orig_pose = numpy.vstack([numpy.hstack([rotation, projection.pose.tvec]), numpy.float32([0, 0, 0, 1])])
-	flip2d = cv2.getRotationMatrix2D((4, 4), 180, 1)
-	spin = numpy.vstack([numpy.hstack([flip2d[:,:2], numpy.float32([0, 0]).reshape(2,1), flip2d[:,2:]]), numpy.float32([[0, 0, 1, 0], [0, 0, 0, 1]])])
-	spin_pose = numpy.dot(orig_pose, spin)
-	spin_rotation = spin_pose[:3,:3]
-	spin_tvec = spin_pose[:3,3:]
-	spin_rvec, jacobian = cv2.Rodrigues(spin_rotation)
-	projection = pose.Projection(cameraIntrinsics=projection.cameraIntrinsics, pose=pose.Pose(spin_rvec, spin_tvec))
+	projection = findboard.flip_sides(projection)
 
 	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
 	frame_size = tuple(reversed(firstlab.shape[:-1]))
@@ -83,7 +75,7 @@ def main():
 	display_reference_heatmap = numpy.zeros(reference_heatmap.shape, dtype=numpy.float32)
 	display_reference_heatmap[reference_heatmap.slice] = reference_heatmap.delegate
 	cv2.imshow(WINNAME, display_reference_heatmap * 100000)
-	cv2.waitKey(500)
+	cv2.waitKey(1000)
 	first_board = chess.Board()
 	negative_composite_memo = {(): detectmovement.Heatmap.blank(projection_shape)}
 	first_move_diffs = detectmovement.get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, first_board)
@@ -112,6 +104,10 @@ def main():
 
 		stable_mask = subtractor.get_stable_mask(history)
 
+		#display_mask = cv2.bitwise_and(framergb, stable_mask)
+		#cv2.imshow(WINNAME, display_mask)
+		#cv2.waitKey(1)
+
 		# FIXME: The particles are being updated inside this loop
 		# Instead, create a separate collection for the next generation of particles
 		for particle in list(particles.values()):
@@ -120,6 +116,12 @@ def main():
 
 			frame_diff = cv2.absdiff(framelab, particle.stablelab)
 			stable_diff = cv2.bitwise_and(frame_diff, stable_mask)
+
+			#cv2.imshow(WINNAME, stable_diff)
+			#key = cv2.waitKey(1) & 0xff
+			#advance_move = key == ord(' ')
+			#print('*', key, '*', advance_move)
+
 			stable_diff_gray = subtractor.lab2mag(stable_diff)
 			stable_diff_heatmap = detectmovement.Heatmap(stable_diff_gray)
 			stable_diff_masked = detectmovement.Heatmap.product_zeros([reference_heatmap, stable_diff_heatmap])
@@ -167,8 +169,11 @@ def main():
 
 			next_particle = Particle(weight, next_board, stablelab, next_move_diffs)
 			particles[next_particle_key] = next_particle
-			print('    accepted candidate', best_normalized_score, chess.Board().variation_san(next_board.move_stack))
+			#if advance_move:
+			#	particles = dict({next_particle_key: next_particle})
+			#	print('    accepted candidate', best_normalized_score, chess.Board().variation_san(next_board.move_stack))
 
+			#if advance_move:
 			if weight > max_weight:
 				composite = numpy.zeros(framergb.shape, dtype=numpy.float32)
 				composite[:,:,2][best_move_diff.slice] += best_move_diff.delegate
@@ -190,7 +195,8 @@ def main():
 					(255, 255, 255),
 				)
 				cv2.imshow(WINNAME, composite / 50)
-				cv2.waitKey(250)
+				cv2.waitKey(500)
+			#advance_move = False
 
 		# Resample by removing low-weighted particles
 		max_weight = max(particle.weight for particle in particles.values())
