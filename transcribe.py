@@ -10,7 +10,7 @@ import numpy
 import findboard
 import pose
 import subtractor
-import detectmovement
+import heatmaps
 
 
 Particle = collections.namedtuple('Particle', ['weight', 'board', 'stablelab', 'diffs'])
@@ -69,16 +69,16 @@ def main():
 	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
 	frame_size = tuple(reversed(firstlab.shape[:-1]))
 	projection_shape = tuple(reversed(frame_size))
-	heatmaps = detectmovement.get_piece_heatmaps(frame_size, projection)
-	occlusions = detectmovement.get_occlusions(heatmaps, projection)
-	reference_heatmap = detectmovement.get_reference_heatmap(heatmaps)
+	piece_heatmaps = heatmaps.get_piece_heatmaps(frame_size, projection)
+	occlusions = heatmaps.get_occlusions(piece_heatmaps, projection)
+	reference_heatmap = heatmaps.get_reference_heatmap(piece_heatmaps)
 	display_reference_heatmap = numpy.zeros(reference_heatmap.shape, dtype=numpy.float32)
 	display_reference_heatmap[reference_heatmap.slice] = reference_heatmap.delegate
 	cv2.imshow(WINNAME, display_reference_heatmap * 100000)
 	cv2.waitKey(1000)
 	first_board = chess.Board()
-	negative_composite_memo = {(): detectmovement.Heatmap.blank(projection_shape)}
-	first_move_diffs = detectmovement.get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, first_board)
+	negative_composite_memo = {(): heatmaps.Heatmap.blank(projection_shape)}
+	first_move_diffs = heatmaps.get_move_diffs(piece_heatmaps, reference_heatmap, occlusions, negative_composite_memo, first_board)
 
 	first_weight = 1.
 	first_particle = Particle(first_weight, first_board, firstlab, first_move_diffs)
@@ -123,8 +123,8 @@ def main():
 			#print('*', key, '*', advance_move)
 
 			stable_diff_gray = subtractor.lab2mag(stable_diff)
-			stable_diff_heatmap = detectmovement.Heatmap(stable_diff_gray)
-			stable_diff_masked = detectmovement.Heatmap.product_zeros([reference_heatmap, stable_diff_heatmap])
+			stable_diff_heatmap = heatmaps.Heatmap(stable_diff_gray)
+			stable_diff_masked = heatmaps.Heatmap.product_zeros([reference_heatmap, stable_diff_heatmap])
 
 			centered_subtractor = stable_diff_masked.subtract(reference_heatmap.reweight(stable_diff_masked.sum()))
 
@@ -160,7 +160,7 @@ def main():
 			existing_particle = particles.get(next_particle_key)
 
 			if existing_particle is None:
-				next_move_diffs = detectmovement.get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, next_board)
+				next_move_diffs = heatmaps.get_move_diffs(piece_heatmaps, reference_heatmap, occlusions, negative_composite_memo, next_board)
 			elif existing_particle.weight < weight:
 				next_move_diffs = existing_particle.diffs
 			else:
