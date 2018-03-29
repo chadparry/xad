@@ -10,6 +10,7 @@ import numpy
 import findboard
 import pose
 import subtractor
+import surface
 import heatmaps
 
 
@@ -60,21 +61,27 @@ def main():
 	corners = findboard.find_chessboard_corners(firstrgb)
 	projection = findboard.get_projection(corners, firstrgb.shape)
 
+	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
+	frame_size = tuple(reversed(firstlab.shape[:-1]))
+
+	light_squares = surface.get_light_square_heatmap(frame_size, projection)
+	cv2.imshow(WINNAME, light_squares.as_dense().delegate)
+	cv2.waitKey(500)
+	dark_squares = surface.get_dark_square_heatmap(frame_size, projection)
+	cv2.imshow(WINNAME, dark_squares.as_dense().delegate)
+	cv2.waitKey(500)
+
 	#cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
 	#ret, firstrgb = cap.read()
 
 	# FIXME: Switch white and black
 	projection = findboard.flip_sides(projection)
 
-	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
-	frame_size = tuple(reversed(firstlab.shape[:-1]))
 	projection_shape = tuple(reversed(frame_size))
 	piece_heatmaps = heatmaps.get_piece_heatmaps(frame_size, projection)
 	occlusions = heatmaps.get_occlusions(piece_heatmaps, projection)
 	reference_heatmap = heatmaps.get_reference_heatmap(piece_heatmaps)
-	display_reference_heatmap = numpy.zeros(reference_heatmap.shape, dtype=numpy.float32)
-	display_reference_heatmap[reference_heatmap.slice] = reference_heatmap.delegate
-	cv2.imshow(WINNAME, display_reference_heatmap * 100000)
+	cv2.imshow(WINNAME, reference_heatmap.as_dense().delegate * 100000)
 	cv2.waitKey(1000)
 	first_board = chess.Board()
 	negative_composite_memo = {(): heatmaps.Heatmap.blank(projection_shape)}

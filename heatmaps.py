@@ -37,6 +37,11 @@ class Heatmap:
 		sparser_slice = numpy.s_[y_start+y_offset:y_stop+y_offset,x_start+x_offset:x_stop+x_offset]
 		return Heatmap(sparse_delegate, sparser_slice, self.shape)
 
+	def as_dense(self):
+		dense_delegate = numpy.zeros(self.shape, dtype=numpy.float32)
+		dense_delegate[self.slice] = self.delegate
+		return Heatmap(dense_delegate)
+
 	def sum(self):
 		return self.delegate.sum()
 
@@ -186,7 +191,7 @@ def get_piece_heatmaps(frame_size, projection):
 			out vec2 tex_coord;
 
 			void main() {
-				gl_Position = vec4(canvas_coord, 0., 1.);
+				gl_Position = vec4(canvas_coord, 0, 1);
 				tex_coord = canvas_coord;
 			}
 		'''),
@@ -339,7 +344,7 @@ def get_piece_heatmaps(frame_size, projection):
 		vao.render(ModernGL.TRIANGLE_STRIP)
 
 		data = fbo.read(components=1, floats=True)
-		heatmap = numpy.frombuffer(data, dtype='float32').reshape(projection_shape)
+		heatmap = numpy.frombuffer(data, dtype=numpy.float32).reshape(projection_shape)
 
 		# TODO: Optimize the raycaster so it only creates the relevant part of the heatmap
 		heatmaps[(square, piece_type)] = Heatmap(heatmap).as_sparse()
