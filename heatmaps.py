@@ -316,18 +316,16 @@ def get_piece_heatmaps(frame_size, projection):
 		height = size.HEIGHTS[piece_type]
 
 		# Transform the piece to a cube at the origin, to simplify the ray caster
-		RELATIVE_REFLECTION_HEIGHT = 0.5
-		piece_scale = height / (1 - RELATIVE_REFLECTION_HEIGHT)
 		shift = numpy.float32([
 			[1, 0, 0, -i],
 			[0, 1, 0, -j],
-			[0, 0, 1, RELATIVE_REFLECTION_HEIGHT],
+			[0, 0, 1, 0],
 			[0, 0, 0, 1],
 		])
 		stretch = numpy.float32([
 			[1, 0, 0, 0],
 			[0, 1, 0, 0],
-			[0, 0, 1 / piece_scale, 0],
+			[0, 0, 1 / height, 0],
 			[0, 0, 0, 1],
 		])
 		piece_inv_pose = numpy.dot(numpy.dot(shift, stretch), inv_pose)
@@ -336,7 +334,7 @@ def get_piece_heatmaps(frame_size, projection):
 
 		prog.uniforms['inv_projection'].write(piece_inv_projection[:3].transpose())
 		prog.uniforms['camera_position'].write(camera_position[:3])
-		prog.uniforms['piece_dimensions'].write(numpy.float32([1, 1, piece_scale]))
+		prog.uniforms['piece_dimensions'].write(numpy.float32([1, 1, height]))
 
 		ctx.clear()
 		# TODO: It would be possible to speed this up by shrinking the frame
@@ -353,8 +351,14 @@ def get_piece_heatmaps(frame_size, projection):
 
 
 def get_reference_heatmap(heatmaps):
-	all_kings = (heatmaps[(square, chess.KING)] for square in chess.SQUARES)
-	return Heatmap.blend(all_kings).normalize_sum()
+	all_kings_heatmaps = (heatmaps[(square, chess.KING)] for square in chess.SQUARES)
+	return Heatmap.blend(all_kings_heatmaps).normalize_sum()
+
+
+def get_board_heatmap(heatmaps, board):
+	pieces = board.piece_map().items()
+	piece_heatmaps = (heatmaps[(square, piece.piece_type)] for (square, piece) in pieces)
+	return Heatmap.blend(piece_heatmaps)
 
 
 def get_depths(projection):
@@ -482,7 +486,7 @@ def main():
 		# The Pearson correlation coefficient measures the goodness of fit
 		score = (move_diff * normalized_subtractor).mean()
 		print('score', board.san(move), score)
-		composite = numpy.zeros((720, 1280, 3), dtype='float32')
+		composite = numpy.zeros((720, 1280, 3), dtype=numpy.float32)
 		composite[:,:,2] += move_diff
 		composite[:,:,1] += normalized_subtractor
 		cv2.imshow(WINNAME, composite / 20)

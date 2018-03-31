@@ -61,30 +61,36 @@ def main():
 	corners = findboard.find_chessboard_corners(firstrgb)
 	projection = findboard.get_projection(corners, firstrgb.shape)
 
-	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
-	frame_size = tuple(reversed(firstlab.shape[:-1]))
-
-	light_squares = surface.get_light_square_heatmap(frame_size, projection)
-	cv2.imshow(WINNAME, light_squares.as_dense().delegate)
-	cv2.waitKey(500)
-	dark_squares = surface.get_dark_square_heatmap(frame_size, projection)
-	cv2.imshow(WINNAME, dark_squares.as_dense().delegate)
-	cv2.waitKey(500)
-
 	#cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
 	#ret, firstrgb = cap.read()
 
-	# FIXME: Switch white and black
-	projection = findboard.flip_sides(projection)
-
+	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
+	frame_size = tuple(reversed(firstlab.shape[:-1]))
 	projection_shape = tuple(reversed(frame_size))
+
 	piece_heatmaps = heatmaps.get_piece_heatmaps(frame_size, projection)
 	occlusions = heatmaps.get_occlusions(piece_heatmaps, projection)
 	reference_heatmap = heatmaps.get_reference_heatmap(piece_heatmaps)
 	cv2.imshow(WINNAME, reference_heatmap.as_dense().delegate * 100000)
-	cv2.waitKey(1000)
+	cv2.waitKey(0)
 	first_board = chess.Board()
 	negative_composite_memo = {(): heatmaps.Heatmap.blank(projection_shape)}
+
+	starting_pieces = heatmaps.get_board_heatmap(piece_heatmaps, first_board)
+	cv2.imshow(WINNAME, starting_pieces.as_dense().delegate)
+	cv2.waitKey(0)
+	light_squares = surface.get_light_square_heatmap(frame_size, projection)
+	visible_light_squares = heatmaps.Heatmap.blend([light_squares, starting_pieces]).subtract(starting_pieces)
+	cv2.imshow(WINNAME, visible_light_squares.as_dense().delegate)
+	cv2.waitKey(0)
+	dark_squares = surface.get_dark_square_heatmap(frame_size, projection)
+	visible_dark_squares = heatmaps.Heatmap.blend([dark_squares, starting_pieces]).subtract(starting_pieces)
+	cv2.imshow(WINNAME, visible_dark_squares.as_dense().delegate)
+	cv2.waitKey(0)
+
+	# FIXME: Switch white and black
+	projection = findboard.flip_sides(projection)
+
 	first_move_diffs = heatmaps.get_move_diffs(piece_heatmaps, reference_heatmap, occlusions, negative_composite_memo, first_board)
 
 	first_weight = 1.
