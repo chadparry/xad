@@ -3,8 +3,13 @@
 import cv2
 import ModernGL
 import numpy
+import scipy.stats
 
 import heatmaps
+
+
+EDGE_RESOLUTION = 10
+EDGE_GAUSSIAN_SCALE = 4
 
 
 def get_light_square_heatmap(frame_size, projection):
@@ -18,6 +23,15 @@ def get_dark_square_heatmap(frame_size, projection):
 def get_square_heatmap(frame_size, projection, is_offset):
 	ctx = ModernGL.create_standalone_context()
 
+	weights = numpy.fromiter(
+		(scipy.stats.norm.cdf((weight_idx / EDGE_RESOLUTION) * EDGE_GAUSSIAN_SCALE)
+			for weight_idx in range(EDGE_RESOLUTION - 1, -1, -1)),
+		dtype=numpy.float32).reshape((1, EDGE_RESOLUTION))
+	weights_size = tuple(reversed(weights.shape))
+	texture = ctx.texture(weights_size, 1, weights, floats=True)
+	texture.repeat_x = False
+	texture.use()
+
 	prog = ctx.program([
 		ctx.vertex_shader('''
 			#version 330
@@ -25,19 +39,33 @@ def get_square_heatmap(frame_size, projection, is_offset):
 			uniform mat4 projection;
 
 			in vec2 board_coord;
+			out vec2 tex_coord;
 
 			void main() {
 				vec4 homog_coord = vec4(board_coord, 0, 1);
 				gl_Position = projection * homog_coord;
+				tex_coord = board_coord;
 			}
 		'''),
 		ctx.fragment_shader('''
 			#version 330
 
+			uniform sampler2D weights;
+
+			in vec2 tex_coord;
 			out float color;
 
+			void get_axis_weight(float location, sampler2D axis_weights, out float weight) {
+				float square_location = mod(location, 1);
+				float tex_index = abs(0.5 - square_location) * 2;
+				weight = texture(axis_weights, vec2(tex_index, 0)).x;
+			}
+
 			void main() {
-				color = 1;
+				float hor_weight, ver_weight;
+				get_axis_weight(tex_coord.x, weights, hor_weight);
+				get_axis_weight(tex_coord.y, weights, ver_weight);
+				color = hor_weight * ver_weight;
 			}
 		'''),
 	])

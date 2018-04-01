@@ -150,7 +150,7 @@ class Heatmap:
 		return Heatmap.product_zeros([self, other]).sum()
 
 
-def get_piece_heatmaps(frame_size, projection):
+def get_piece_heatmaps(frame_size, voxel_resolution, projection):
 	rotation, jacobian = cv2.Rodrigues(projection.pose.rvec.astype(numpy.float32))
 	inv_rotation = rotation.transpose()
 	inv_tvec = numpy.dot(inv_rotation, -projection.pose.tvec.astype(numpy.float32))
@@ -170,8 +170,7 @@ def get_piece_heatmaps(frame_size, projection):
 	gl_inv_camera_matrix = numpy.dot(inv_camera_matrix, numpy.dot(gl_scale, gl_shift))
 	ext_inv_camera_matrix = numpy.vstack([gl_inv_camera_matrix, numpy.float32([0, 0, 1])])
 
-	horizontal_resolution, vertical_resolution = (12, 24)
-	piece_voxels = voxels.get_piece_voxels(horizontal_resolution, vertical_resolution)
+	piece_voxels = voxels.get_piece_voxels(*voxel_resolution)
 
 	# This helper performs volume ray casting
 	ctx = ModernGL.create_standalone_context()
@@ -446,6 +445,7 @@ def get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_m
 
 def main():
 	frame_size = (1280, 720)
+	voxel_resolution = (12, 24)
 
 	# Projection found by findboard
 	projection = pose.Projection(
@@ -471,7 +471,7 @@ def main():
 		),
 	)
 
-	heatmaps = get_piece_heatmaps(frame_size, projection)
+	heatmaps = get_piece_heatmaps(frame_size, voxel_resolution, projection)
 	reference_heatmap = get_reference_heatmap(heatmaps)
 	occlusions = get_occlusions(heatmaps, projection)
 	board = chess.Board()

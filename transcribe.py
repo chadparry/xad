@@ -21,6 +21,7 @@ MIN_CORRELATION = 0.35
 EXPECTED_CORRELATION = 0.5
 MAX_WEIGHT_RATIO = 0.75
 HISTORY_LEN = 8
+VOXEL_RESOLUTION = (12, 24)
 
 
 WINNAME = 'Chess Transcription'
@@ -68,7 +69,7 @@ def main():
 	frame_size = tuple(reversed(firstlab.shape[:-1]))
 	projection_shape = tuple(reversed(frame_size))
 
-	piece_heatmaps = heatmaps.get_piece_heatmaps(frame_size, projection)
+	piece_heatmaps = heatmaps.get_piece_heatmaps(frame_size, VOXEL_RESOLUTION, projection)
 	occlusions = heatmaps.get_occlusions(piece_heatmaps, projection)
 	reference_heatmap = heatmaps.get_reference_heatmap(piece_heatmaps)
 	cv2.imshow(WINNAME, reference_heatmap.as_dense().delegate * 100000)
