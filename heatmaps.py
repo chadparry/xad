@@ -349,6 +349,10 @@ def get_piece_heatmaps(frame_size, voxel_resolution, projection):
 	return heatmaps
 
 
+def flip_piece_heatmaps(piece_heatmaps):
+	return {(flip_square(square), piece_type): heatmap for ((square, piece_type), heatmap) in piece_heatmaps.items()}
+
+
 def get_reference_heatmap(heatmaps):
 	all_kings_heatmaps = (heatmaps[(square, chess.KING)] for square in chess.SQUARES)
 	return Heatmap.blend(all_kings_heatmaps).normalize_sum()
@@ -392,6 +396,15 @@ def get_occlusions(heatmaps, projection):
 		occlusions[ordered_squares[1]].add(ordered_squares[0])
 	return collections.defaultdict(list,
 		((square, sorted(values, key=lambda square: depths[square])) for (square, values) in occlusions.items()))
+
+
+def flip_occlusions(occlusions):
+	return collections.defaultdict(list,
+		((flip_square(square), [flip_square(value) for value in values]) for (square, values) in occlusions.items()))
+
+
+def flip_square(square):
+	return 63 - square
 
 
 def get_negative_composite(negative_composite_memo, heatmaps, sorted_pieces):

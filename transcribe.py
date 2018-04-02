@@ -6,6 +6,7 @@ import cv2
 import hashlib
 import math
 import numpy
+import sklearn.naive_bayes
 
 import findboard
 import pose
@@ -48,8 +49,8 @@ def main():
 	cap.set(cv2.CAP_PROP_POS_MSEC, 11000)
 
 	ret, firstrgb = cap.read()
-	cv2.imshow(WINNAME, firstrgb)
-	cv2.waitKey(1)
+	#cv2.imshow(WINNAME, firstrgb)
+	#cv2.waitKey(0)
 	#while True:
 	#	ret, firstrgb = cap.read()
 	#	if firstrgb is None:
@@ -72,25 +73,60 @@ def main():
 	piece_heatmaps = heatmaps.get_piece_heatmaps(frame_size, VOXEL_RESOLUTION, projection)
 	occlusions = heatmaps.get_occlusions(piece_heatmaps, projection)
 	reference_heatmap = heatmaps.get_reference_heatmap(piece_heatmaps)
-	cv2.imshow(WINNAME, reference_heatmap.as_dense().delegate * 100000)
-	cv2.waitKey(0)
+	#cv2.imshow(WINNAME, reference_heatmap.as_dense().delegate / reference_heatmap.delegate.max())
+	#cv2.waitKey(0)
 	first_board = chess.Board()
 	negative_composite_memo = {(): heatmaps.Heatmap.blank(projection_shape)}
 
+	white_pieces_board = chess.Board()
+	white_pieces_board.set_piece_map({square: piece for (square, piece) in first_board.piece_map().items() if piece.color == chess.WHITE})
+	black_pieces_board = chess.Board()
+	black_pieces_board.set_piece_map({square: piece for (square, piece) in first_board.piece_map().items() if piece.color == chess.BLACK})
+	# FIXME: Account for occlusion of pieces
+	visible_white_pieces = heatmaps.get_board_heatmap(piece_heatmaps, white_pieces_board)
+	visible_black_pieces = heatmaps.get_board_heatmap(piece_heatmaps, black_pieces_board)
+
+	first_lightness = firstlab[:,:,0]
+	white_average = numpy.average(first_lightness[visible_white_pieces.slice], weights=visible_white_pieces.delegate)
+	black_average = numpy.average(first_lightness[visible_black_pieces.slice], weights=visible_black_pieces.delegate)
+
+	if black_average > white_average:
+		# Switch white and black
+		projection = findboard.flip_sides(projection)
+		piece_heatmaps = heatmaps.flip_piece_heatmaps(piece_heatmaps)
+		occlusions = heatmaps.flip_occlusions(occlusions)
+		(visible_white_pieces, visible_black_pieces) = (visible_black_pieces, visible_white_pieces)
+
 	starting_pieces = heatmaps.get_board_heatmap(piece_heatmaps, first_board)
-	cv2.imshow(WINNAME, starting_pieces.as_dense().delegate)
-	cv2.waitKey(0)
+	#cv2.imshow(WINNAME, starting_pieces.as_dense().delegate)
+	#cv2.waitKey(0)
 	light_squares = surface.get_light_square_heatmap(frame_size, projection)
 	visible_light_squares = heatmaps.Heatmap.blend([light_squares, starting_pieces]).subtract(starting_pieces)
-	cv2.imshow(WINNAME, visible_light_squares.as_dense().delegate)
-	cv2.waitKey(0)
+	#cv2.imshow(WINNAME, visible_light_squares.as_dense().delegate)
+	#cv2.waitKey(0)
 	dark_squares = surface.get_dark_square_heatmap(frame_size, projection)
 	visible_dark_squares = heatmaps.Heatmap.blend([dark_squares, starting_pieces]).subtract(starting_pieces)
-	cv2.imshow(WINNAME, visible_dark_squares.as_dense().delegate)
-	cv2.waitKey(0)
+	#cv2.imshow(WINNAME, visible_dark_squares.as_dense().delegate)
+	#cv2.waitKey(0)
 
-	# FIXME: Switch white and black
-	projection = findboard.flip_sides(projection)
+	color_classifier = sklearn.naive_bayes.GaussianNB()
+	class_heatmaps = [visible_light_squares, visible_dark_squares, visible_white_pieces, visible_black_pieces]
+	class_pixels = [firstlab[class_heatmap.slice].reshape(-1, firstlab.shape[-1]) for class_heatmap in class_heatmaps]
+	class_weights = [class_heatmap.delegate.ravel() for class_heatmap in class_heatmaps]
+	class_labels = [numpy.full(class_weight.shape, class_idx) for (class_idx, class_weight) in enumerate(class_weights)]
+	color_classifier.fit(
+		numpy.vstack(class_pixels),
+		numpy.hstack(class_labels),
+		numpy.hstack(class_weights))
+
+	#classified = color_classifier.predict_proba(firstlab.reshape(-1, firstlab.shape[-1])).reshape(tuple(firstlab.shape[:2]) + (4,))
+	#classified_img = numpy.stack([
+	#	classified[:,:,0],
+	#	classified[:,:,1] + classified[:,:,2],
+	#	classified[:,:,3] + classified[:,:,2],
+	#], axis=2)
+	#cv2.imshow(WINNAME, classified_img)
+	#cv2.waitKey(0)
 
 	first_move_diffs = heatmaps.get_move_diffs(piece_heatmaps, reference_heatmap, occlusions, negative_composite_memo, first_board)
 
