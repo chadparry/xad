@@ -17,11 +17,12 @@ WINNAME = 'Chess Transcription'
 
 
 def lab2mag(img):
-	return numpy.linalg.norm(img, axis=2) / math.sqrt(3)
+	return numpy.linalg.norm(img, axis=-1) / math.sqrt(img.shape[-1])
 
 
 def bin2mask(img):
-	return cv2.merge([img] * 3)
+	# Change a 1-channel image to a 4-channel image
+	return numpy.tile(numpy.expand_dims(img, axis=-1), (4,))
 
 
 def get_stable_mask(history):

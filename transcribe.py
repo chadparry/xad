@@ -15,7 +15,7 @@ import surface
 import heatmaps
 
 
-Particle = collections.namedtuple('Particle', ['weight', 'board', 'stablelab', 'diffs'])
+Particle = collections.namedtuple('Particle', ['weight', 'board', 'stable_classes', 'diffs'])
 
 
 MIN_CORRELATION = 0.35
@@ -119,19 +119,19 @@ def main():
 		numpy.hstack(class_labels),
 		numpy.hstack(class_weights))
 
-	#classified = color_classifier.predict_proba(firstlab.reshape(-1, firstlab.shape[-1])).reshape(tuple(firstlab.shape[:2]) + (4,))
-	#classified_img = numpy.stack([
-	#	classified[:,:,0],
-	#	classified[:,:,1] + classified[:,:,2],
-	#	classified[:,:,3] + classified[:,:,2],
+	first_classes = color_classifier.predict_proba(firstlab.reshape(-1, firstlab.shape[-1])).reshape(tuple(firstlab.shape[:2]) + (4,))
+	#classified_composite = numpy.stack([
+	#	first_classes[:,:,0],
+	#	first_classes[:,:,1] + first_classes[:,:,2],
+	#	first_classes[:,:,3] + first_classes[:,:,2],
 	#], axis=2)
-	#cv2.imshow(WINNAME, classified_img)
+	#cv2.imshow(WINNAME, classified_composite)
 	#cv2.waitKey(0)
 
 	first_move_diffs = heatmaps.get_move_diffs(piece_heatmaps, reference_heatmap, occlusions, negative_composite_memo, first_board)
 
 	first_weight = 1.
-	first_particle = Particle(first_weight, first_board, firstlab, first_move_diffs)
+	first_particle = Particle(first_weight, first_board, first_classes, first_move_diffs)
 	particles = {get_board_key(first_board): first_particle}
 	threshold_weight = first_weight * MAX_WEIGHT_RATIO
 	max_weight = first_weight
@@ -158,14 +158,24 @@ def main():
 		#cv2.imshow(WINNAME, display_mask)
 		#cv2.waitKey(1)
 
+		# TODO: Only classify the relevant sections of the image
+		frame_classes = color_classifier.predict_proba(framelab.reshape(-1, framelab.shape[-1])).reshape(tuple(framelab.shape[:-1]) + (4,))
+		#classified_composite = numpy.stack([
+		#	frame_classes[:,:,0],
+		#	frame_classes[:,:,1] + frame_classes[:,:,2],
+		#	frame_classes[:,:,3] + frame_classes[:,:,2],
+		#], axis=2)
+		#cv2.imshow(WINNAME, classified_composite)
+		#cv2.waitKey(1)
+
 		# FIXME: The particles are being updated inside this loop
 		# Instead, create a separate collection for the next generation of particles
 		for particle in list(particles.values()):
 			if not particle.diffs:
 				continue
 
-			frame_diff = cv2.absdiff(framelab, particle.stablelab)
-			stable_diff = cv2.bitwise_and(frame_diff, stable_mask)
+			frame_diff = cv2.absdiff(frame_classes, particle.stable_classes)
+			stable_diff = numpy.choose(stable_mask, [numpy.zeros_like(frame_diff), frame_diff], mode='clip')
 
 			#cv2.imshow(WINNAME, stable_diff)
 			#key = cv2.waitKey(1) & 0xff
@@ -199,10 +209,10 @@ def main():
 				#print('  rejected candidate', weight, chess.Board().variation_san(next_board.move_stack))
 				continue
 
-			newstablelab = cv2.bitwise_and(framelab, stable_mask)
+			newstable_classes = cv2.bitwise_and(frame_classes, stable_mask)
 			invmask = cv2.bitwise_not(stable_mask)
-			holelab = cv2.bitwise_and(particle.stablelab, invmask)
-			stablelab = cv2.bitwise_or(holelab, newstablelab)
+			hole_classes = cv2.bitwise_and(particle.stable_classes, invmask)
+			stable_classes = cv2.bitwise_or(hole_classes, newstable_classes)
 
 			next_board = particle.board.copy()
 			next_board.push(best_move)
@@ -217,7 +227,7 @@ def main():
 				#print('  rejected candidate', weight, chess.Board().variation_san(next_board.move_stack))
 				continue
 
-			next_particle = Particle(weight, next_board, stablelab, next_move_diffs)
+			next_particle = Particle(weight, next_board, stable_classes, next_move_diffs)
 			particles[next_particle_key] = next_particle
 			#if advance_move:
 			#	particles = dict({next_particle_key: next_particle})

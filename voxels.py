@@ -64,7 +64,6 @@ def get_memoized_radial_attenuation(horizontal_resolution):
 			for h in (x, y)
 		]))
 		for (x, y) in idxs}
-	print('memo', 1 / DENSITY_FACTOR, memo)
 	def memoized_radial_attenuation(idx, x, y, z):
 		# Take advantage of the 8-fold symmetry of the radial distance
 		(mirrored_x, mirrored_y) = (
