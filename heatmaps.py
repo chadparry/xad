@@ -37,10 +37,10 @@ class Heatmap:
 		sparser_slice = numpy.s_[y_start+y_offset:y_stop+y_offset,x_start+x_offset:x_stop+x_offset]
 		return Heatmap(sparse_delegate, sparser_slice, self.shape)
 
-	def as_dense(self):
+	def as_numpy(self):
 		dense_delegate = numpy.zeros(self.shape, dtype=numpy.float32)
 		dense_delegate[self.slice] = self.delegate
-		return Heatmap(dense_delegate)
+		return dense_delegate
 
 	def sum(self):
 		return self.delegate.sum()
@@ -403,6 +403,10 @@ def flip_occlusions(occlusions):
 		((flip_square(square), [flip_square(value) for value in values]) for (square, values) in occlusions.items()))
 
 
+def flip_depths(depths):
+	return {flip_square(square): idx for (square, idx) in depths.items()}
+
+
 def flip_square(square):
 	return 63 - square
 
@@ -433,25 +437,55 @@ def get_piece_diff(negative_composite_memo, heatmaps, occlusions, stable_pieces,
 	return diff
 
 
-def get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, board):
+def multichannel_blend(background_channels, foreground_heatmap, foreground_color):
+	foreground_numpy = foreground_heatmap.as_numpy()
+	negative_heatmap = 1 - foreground_numpy
+	blended_channels = background_channels * numpy.expand_dims(negative_heatmap, axis=-1)
+	foreground_idx = { chess.WHITE: 2, chess.BLACK: 3 }[foreground_color]
+	blended_channels[:,:,foreground_idx] += foreground_numpy
+	return blended_channels
+
+
+def draw_pieces(heatmaps, composite_memo, sorted_pieces):
+	key = tuple(sorted_pieces)
+	if key in composite_memo:
+		return composite_memo[key]
+
+	(sorted_pieces_tail, (head_square, head_piece)) = (sorted_pieces[:-1], sorted_pieces[-1])
+
+	drawing_tail = draw_pieces(heatmaps, composite_memo, sorted_pieces_tail)
+	piece_heatmap = heatmaps[(head_square, head_piece.piece_type)]
+	drawing = multichannel_blend(drawing_tail, piece_heatmap, head_piece.color)
+
+	composite_memo[key] = drawing
+	return drawing
+
+
+def draw_board(heatmaps, depths, composite_memo, board):
+	pieces = board.piece_map().items()
+	sorted_pieces = sorted(pieces, key=lambda piece_item: depths[piece_item[0]])
+	return draw_pieces(heatmaps, composite_memo, sorted_pieces)
+
+
+def get_move_diffs(heatmaps, reference_heatmap, depths, composite_memo, board):
 	move_diffs = {}
 	for move in board.legal_moves:
-		pieces_before = board.piece_map().items()
+		heatmaps_before = draw_board(heatmaps, depths, composite_memo, board)
 		board.push(move)
 		try:
-			pieces_after = board.piece_map().items()
+			heatmaps_after = draw_board(heatmaps, depths, composite_memo, board)
 		finally:
 			board.pop()
-		moved_piece_items = pieces_before ^ pieces_after
-		moved_pieces = frozenset([(square, piece.piece_type) for (square, piece) in moved_piece_items])
-		stable_pieces = [(square, piece.piece_type)
-			for (square, piece) in board.piece_map().items()
-			if (square, piece) not in moved_pieces]
-		piece_diffs = (get_piece_diff(negative_composite_memo, heatmaps, occlusions, stable_pieces, piece_item)
-			for piece_item in moved_pieces)
+		move_diff = heatmaps_after - heatmaps_before
 
-		combined_diff = Heatmap.blend(piece_diffs)
-		normalized_diff = combined_diff.as_sparse().normalize_stdev()
+		# TODO: The move_diff should be made sparse
+
+		diff_stdev =  move_diff.std()
+		if diff_stdev:
+			normalized_diff = move_diff / diff_stdev
+		else:
+			normalized_diff = move_diff
+
 		move_diffs[move] = normalized_diff
 	return move_diffs
 
