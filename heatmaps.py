@@ -451,7 +451,7 @@ def draw_pieces(heatmaps, composite_memo, sorted_pieces):
 	if key in composite_memo:
 		return composite_memo[key]
 
-	(sorted_pieces_tail, (head_square, head_piece)) = (sorted_pieces[:-1], sorted_pieces[-1])
+	((head_square, head_piece), sorted_pieces_tail) = (sorted_pieces[0], sorted_pieces[1:])
 
 	drawing_tail = draw_pieces(heatmaps, composite_memo, sorted_pieces_tail)
 	piece_heatmap = heatmaps[(head_square, head_piece.piece_type)]
