@@ -18,6 +18,21 @@ import voxels
 WINNAME = 'Chess Transcription'
 
 
+def show_visible_composite(diff, delay=1):
+	classified_composite = numpy.stack([
+		diff[:,:,0],
+		diff[:,:,1] + diff[:,:,2],
+		diff[:,:,3] + diff[:,:,2],
+		#numpy.zeros_like(diff[:,:,0]),
+		#diff[:,:,2],
+		#diff[:,:,3] + diff[:,:,2],
+	], axis=2)
+	shifted_classified_composite = classified_composite - classified_composite.min()
+	normalized_classified_composite = shifted_classified_composite / shifted_classified_composite.max()
+	cv2.imshow(WINNAME, normalized_classified_composite)
+	cv2.waitKey(delay)
+
+
 class Heatmap:
 	"""Allows multiplication on a very sparse matrix, more efficient for this case than scipy.sparse"""
 
@@ -446,7 +461,7 @@ def multichannel_blend(background_channels, foreground_heatmap, foreground_color
 	return blended_channels
 
 
-def draw_pieces(heatmaps, composite_memo, sorted_pieces):
+def draw_pieces(heatmaps, composite_memo, sorted_pieces, recursive=True):
 	key = tuple(sorted_pieces)
 	if key in composite_memo:
 		return composite_memo[key]
@@ -455,39 +470,50 @@ def draw_pieces(heatmaps, composite_memo, sorted_pieces):
 
 	drawing_tail = draw_pieces(heatmaps, composite_memo, sorted_pieces_tail)
 	piece_heatmap = heatmaps[(head_square, head_piece.piece_type)]
+
+	#cv2.imshow(WINNAME, piece_heatmap.delegate)
+	#cv2.waitKey(0)
+
 	drawing = multichannel_blend(drawing_tail, piece_heatmap, head_piece.color)
 
-	composite_memo[key] = drawing
+	if not recursive:
+		composite_memo[key] = drawing
 	return drawing
 
 
 def draw_board(heatmaps, depths, composite_memo, board):
 	pieces = board.piece_map().items()
 	sorted_pieces = sorted(pieces, key=lambda piece_item: depths[piece_item[0]])
-	return draw_pieces(heatmaps, composite_memo, sorted_pieces)
+	return draw_pieces(heatmaps, composite_memo, sorted_pieces, recursive=False)
 
 
 def get_move_diffs(heatmaps, reference_heatmap, depths, composite_memo, board):
 	move_diffs = {}
 	for move in board.legal_moves:
-		heatmaps_before = draw_board(heatmaps, depths, composite_memo, board)
-		board.push(move)
-		try:
-			heatmaps_after = draw_board(heatmaps, depths, composite_memo, board)
-		finally:
-			board.pop()
-		move_diff = heatmaps_after - heatmaps_before
-
-		# TODO: The move_diff should be made sparse
-
-		diff_stdev =  move_diff.std()
-		if diff_stdev:
-			normalized_diff = move_diff / diff_stdev
-		else:
-			normalized_diff = move_diff
-
-		move_diffs[move] = normalized_diff
+		move_diff = get_move_diff(heatmaps, reference_heatmap, depths, composite_memo, board, move)
+		move_diffs[move] = move_diff
 	return move_diffs
+
+
+def get_move_diff(heatmaps, reference_heatmap, depths, composite_memo, board, move):
+	heatmaps_before = draw_board(heatmaps, depths, composite_memo, board)
+	board.push(move)
+	try:
+		heatmaps_after = draw_board(heatmaps, depths, composite_memo, board)
+	finally:
+		board.pop()
+	move_diff = heatmaps_after - heatmaps_before
+	#show_visible_composite(heatmaps_after, 1)
+
+	# TODO: The move_diff should be made sparse
+
+	diff_stdev =  move_diff.std()
+	if diff_stdev:
+		normalized_diff = move_diff / diff_stdev
+	else:
+		normalized_diff = move_diff
+
+	return normalized_diff
 
 
 def main():

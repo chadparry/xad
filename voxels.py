@@ -11,9 +11,9 @@ import size
 
 
 # Probability that the center of the square is covered by the piece
-CENTER_BASE_FACTOR = 1.
+CENTER_BASE_FACTOR = 0.5
 # Lower numbers for spread out heatmaps; higher numbers for centered heatmaps
-GAUSSIAN_SCALE = 2.
+GAUSSIAN_SCALE = 4.
 
 
 def get_piece_voxels(horizontal_resolution, vertical_resolution):

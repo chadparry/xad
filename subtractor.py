@@ -9,7 +9,7 @@ import numpy.linalg
 
 
 EST_OPEN_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
-EST_CLOSE_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (32,32))
+EST_CLOSE_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (16,16))
 STABLE_CLOSE_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
 
 
@@ -27,7 +27,8 @@ def bin2mask(img):
 
 def get_stable_mask(history):
 	latestlab = history[0]
-	movements = numpy.zeros(latestlab.shape, dtype=numpy.uint32)
+	return numpy.ones_like(latestlab)
+	movements = numpy.zeros_like(latestlab)
 	for clogidx in itertools.count(1):
 		cidx = 2**clogidx - 1
 		if cidx >= len(history):
@@ -38,9 +39,10 @@ def get_stable_mask(history):
 	movementsmag = lab2mag(movements)
 
 	total_weight = math.floor(math.log(len(history), 2))
-	threshold = total_weight * 2
-	(ret, estbinf) = cv2.threshold(movementsmag, threshold, 255, cv2.THRESH_BINARY_INV)
-	estbin = estbinf.astype(numpy.uint8)
+	threshold = total_weight / 500
+	#(ret, estbinf) = cv2.threshold(movementsmag, threshold, 255, cv2.THRESH_BINARY_INV)
+	#estbin = estbinf.astype(numpy.uint8)
+	(ret, estbin) = cv2.threshold(movementsmag, threshold, 1, cv2.THRESH_BINARY_INV)
 	opened = cv2.morphologyEx(estbin, cv2.MORPH_OPEN, EST_OPEN_KERNEL)
 	estmask = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, EST_CLOSE_KERNEL)
 	stable_mask = bin2mask(estmask)

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import chess
+import chess.pgn
 import collections
 import cv2
 import hashlib
+import io
 import math
 import numpy
 import sklearn.naive_bayes
@@ -26,6 +28,14 @@ VOXEL_RESOLUTION = (12, 24)
 
 
 WINNAME = 'Chess Transcription'
+
+
+TEST_LINES = [
+#	chess.pgn.read_game(io.StringIO('1. e4 e5 2. Nf3 c6')).end().board(),
+#	chess.pgn.read_game(io.StringIO('1. e4 e5 2. Nf3 Nc6')).end().board(),
+	chess.pgn.read_game(io.StringIO('1. e4 c5')).end().board(),
+]
+
 
 
 def get_board_key(board):
@@ -111,6 +121,11 @@ def main():
 	#cv2.imshow(WINNAME, visible_dark_squares.as_numpy())
 	#cv2.waitKey(0)
 
+	class_numpy = [heatmap.as_numpy() for heatmap in [visible_light_squares, visible_dark_squares, visible_white_pieces, visible_black_pieces]]
+	heatmaps.show_visible_composite(numpy.stack(class_numpy, axis=2), 0)
+	for heatmap in [visible_white_pieces, visible_black_pieces, visible_light_squares, visible_dark_squares]:
+		cv2.imshow(WINNAME, numpy.tile(numpy.expand_dims(heatmap.as_numpy(), axis=-1), (3,)) * firstrgb / 255)
+		cv2.waitKey(0)
 	color_classifier = sklearn.naive_bayes.GaussianNB()
 	class_heatmaps = [visible_light_squares, visible_dark_squares, visible_white_pieces, visible_black_pieces]
 	class_pixels = [firstlab[class_heatmap.slice].reshape(-1, firstlab.shape[-1]) for class_heatmap in class_heatmaps]
@@ -145,7 +160,7 @@ def main():
 	threshold_weight = first_weight * MAX_WEIGHT_RATIO
 	max_weight = first_weight
 
-	history = collections.deque([firstlab] * HISTORY_LEN)
+	history = collections.deque([first_classes] * HISTORY_LEN)
 	while True:
 		print('memory', len(particles), sum(len(particle.diffs) for particle in particles.values()), sum(move_diff.size for particle in particles.values() for move_diff in particle.diffs.values()))
 		#pos = cap.get(cv2.CAP_PROP_POS_MSEC)
@@ -154,55 +169,55 @@ def main():
 		ret, framergb = cap.read()
 		if framergb is None:
 			break
-		cv2.imshow(WINNAME, framergb)
-		cv2.waitKey(1)
+		#cv2.imshow(WINNAME, framergb)
+		#cv2.waitKey(1)
 		framelab = cv2.cvtColor(framergb, cv2.COLOR_BGR2LAB)
 
-		history.appendleft(framelab)
+		# TODO: Only classify the relevant sections of the image
+		frame_classes = color_classifier.predict_proba(framelab.reshape(-1, framelab.shape[-1])).reshape(tuple(framelab.shape[:-1]) + (4,))
+		#heatmaps.show_visible_composite(frame_classes)
+
+		history.appendleft(frame_classes)
 		if len(history) > HISTORY_LEN:
 			history.pop()
 
 		stable_mask = subtractor.get_stable_mask(history)
 
-		#display_mask = cv2.bitwise_and(framergb, stable_mask)
-		#cv2.imshow(WINNAME, display_mask)
-		#cv2.waitKey(1)
+		display_mask = frame_classes * stable_mask
+		heatmaps.show_visible_composite(display_mask)
 
-		# TODO: Only classify the relevant sections of the image
-		frame_classes = color_classifier.predict_proba(framelab.reshape(-1, framelab.shape[-1])).reshape(tuple(framelab.shape[:-1]) + (4,))
-		#classified_composite = numpy.stack([
-		#	frame_classes[:,:,0],
-		#	frame_classes[:,:,1] + frame_classes[:,:,2],
-		#	frame_classes[:,:,3] + frame_classes[:,:,2],
-		#], axis=2)
-		#cv2.imshow(WINNAME, classified_composite)
-		#cv2.waitKey(1)
+		#continue
 
 		# FIXME: The particles are being updated inside this loop
 		# Instead, create a separate collection for the next generation of particles
-		for particle in list(particles.values()):
+		for particle in sorted(particles.values(), key=lambda particle: particle.weight, reverse=True):
+			if TEST_LINES and not any(particle.board.move_stack == line.move_stack[:len(particle.board.move_stack)] for line in TEST_LINES):
+				continue
 			if not particle.diffs:
 				continue
 
 			frame_diff = frame_classes - particle.stable_classes
-			stable_diff = numpy.choose(stable_mask, [numpy.zeros_like(frame_diff), frame_diff], mode='clip')
-			#stable_diff = frame_diff
-			#stable_diff[stable_mask] = 0
+			stable_diff = frame_diff * stable_mask
 
-			#cv2.imshow(WINNAME, stable_diff)
-			#key = cv2.waitKey(1) & 0xff
-			#advance_move = key == ord(' ')
-			#print('*', key, '*', advance_move)
-
-			#stable_diff_gray = subtractor.lab2mag(stable_diff)
-			#stable_diff_heatmap = heatmaps.Heatmap(stable_diff_gray)
-			#stable_diff_masked = heatmaps.Heatmap.product_zeros([reference_heatmap, stable_diff_heatmap])
 			stable_diff_masked = stable_diff * reference_heatmap_numpy
 
-			centered_subtractor = stable_diff_masked - numpy.expand_dims(reference_heatmap.reweight(stable_diff_masked.sum()).as_numpy(), axis=-1)
+			centered_subtractor = stable_diff - numpy.expand_dims(reference_heatmap.reweight(stable_diff_masked.sum()).as_numpy(), axis=-1)
 
-			#cv2.imshow(WINNAME, (centered_subtractor[:,:,2] - centered_subtractor[:,:,2].min()) / (centered_subtractor[:,:,2].max() - centered_subtractor[:,:,2].min()))
-			#key = cv2.waitKey(0)
+			if TEST_LINES:
+				for (move, move_diff) in particle.diffs.items():
+					particle.board.push(move)
+					try:
+						if any(particle.board.move_stack == line.move_stack[:len(particle.board.move_stack)] for line in TEST_LINES):
+							pass
+							#print(particle.board.move_stack)
+							#heatmaps.show_visible_composite(move_diff, 250)
+					finally:
+						particle.board.pop()
+
+			#masked_centered_subtractor = reference_heatmap_numpy * centered_subtractor
+			#heatmaps.show_visible_composite(masked_centered_subtractor, 250)
+			# FIXME
+			#break
 
 			# The Pearson correlation coefficient measures the goodness of fit
 			scores = ((move, move_diff, (move_diff * centered_subtractor).sum())
@@ -228,11 +243,7 @@ def main():
 				#print('  rejected candidate', weight, best_move)
 				continue
 
-			#newstable_classes = cv2.bitwise_and(frame_classes, stable_mask)
-			#invmask = cv2.bitwise_not(stable_mask)
-			#hole_classes = cv2.bitwise_and(particle.stable_classes, invmask)
-			#stable_classes = cv2.bitwise_or(hole_classes, newstable_classes)
-			stable_classes = numpy.choose(stable_mask, [particle.stable_classes, frame_classes], mode='clip')
+			stable_classes = frame_classes * stable_mask + particle.stable_classes * (1 - stable_mask)
 
 			next_board = particle.board.copy()
 			next_board.push(best_move)
@@ -249,11 +260,6 @@ def main():
 
 			next_particle = Particle(weight, next_board, stable_classes, next_move_diffs)
 			particles[next_particle_key] = next_particle
-			#if advance_move:
-			#	particles = dict({next_particle_key: next_particle})
-			#	print('    accepted candidate', best_normalized_score, chess.Board().variation_san(next_board.move_stack))
-
-			#if advance_move:
 			if weight > max_weight:
 				composite = numpy.zeros(framergb.shape, dtype=numpy.float32)
 				composite[:,:,0] += best_move_diff[:,:,0] + best_move_diff[:,:,1]
@@ -280,7 +286,6 @@ def main():
 				)
 				cv2.imshow(WINNAME, composite)
 				cv2.waitKey(500)
-			#advance_move = False
 
 		# Resample by removing low-weighted particles
 		max_weight = max(particle.weight for particle in particles.values())
