@@ -8,6 +8,9 @@ import hashlib
 import io
 import math
 import numpy
+import skimage.color
+import skimage.filters
+import skimage.morphology
 import sklearn.naive_bayes
 
 import findboard
@@ -40,6 +43,32 @@ TEST_LINES = [
 
 def get_board_key(board):
 	return board.fen()
+
+
+def get_square_marker(board, square):
+	piece = board.piece_at(square)
+	if piece is None:
+		if square in chess.SquareSet(chess.BB_LIGHT_SQUARES):
+			return 1
+		else:
+			return 2
+	else:
+		if piece.color == chess.WHITE:
+			return 3
+		else:
+			return 4
+
+def get_square_center(projection, square):
+	# TODO: Move the marker up a little to the most dense-looking area of the point cloud
+	square_center = numpy.float32([[chess.square_file(square) + 0.5], [chess.square_rank(square) + 0.5], [0.], [1.]])
+	(rotation, jacobian) = cv2.Rodrigues(projection.pose.rvec)
+	projection_matrix = numpy.dot(
+			projection.cameraIntrinsics.cameraMatrix,
+			numpy.hstack([rotation, projection.pose.tvec]),
+		).astype(numpy.float32)
+	image_homo_coord = numpy.dot(projection_matrix, square_center)
+	image_coord = image_homo_coord[:2].reshape(2) / image_homo_coord[2]
+	return image_coord
 
 
 def main():
@@ -90,10 +119,36 @@ def main():
 	#cv2.waitKey(0)
 	first_board = chess.Board()
 
-	white_pieces_board = chess.Board()
-	white_pieces_board.set_piece_map({square: piece for (square, piece) in first_board.piece_map().items() if piece.color == chess.WHITE})
-	black_pieces_board = chess.Board()
-	black_pieces_board.set_piece_map({square: piece for (square, piece) in first_board.piece_map().items() if piece.color == chess.BLACK})
+	#white_pieces_board = chess.Board()
+	#white_pieces_board.set_piece_map({square: piece for (square, piece) in first_board.piece_map().items() if piece.color == chess.WHITE})
+	#black_pieces_board = chess.Board()
+	#black_pieces_board.set_piece_map({square: piece for (square, piece) in first_board.piece_map().items() if piece.color == chess.BLACK})
+
+	# TODO: Remove outlier colors
+	marker_coords = (
+		(get_square_center(projection, square), get_square_marker(first_board, square))
+		for square in chess.SQUARES
+	)
+	kernel = numpy.ones((10, 10), numpy.float32)
+	blurred = cv2.filter2D(firstrgb, -1, kernel / kernel.sum())
+	cv2.imshow(WINNAME, blurred)
+	cv2.waitKey(0)
+	elevation_map = numpy.linalg.norm([
+		skimage.filters.sobel(blurred[:,:,0]),
+		skimage.filters.sobel(blurred[:,:,1]),
+		skimage.filters.sobel(blurred[:,:,2]),
+	], axis=0)
+	cv2.imshow(WINNAME, elevation_map)
+	cv2.waitKey(0)
+	markers = numpy.zeros((elevation_map.shape[0], elevation_map.shape[1]), dtype=numpy.uint8)
+	for (marker_coord, marker_label) in marker_coords:
+		matrix_index = (int(round(d)) for d in reversed(marker_coord))
+		markers.itemset(*matrix_index, marker_label)
+	segmentation = skimage.morphology.watershed(elevation_map, markers)
+	#segmentation = ndi.binary_fill_holes(segmentation - 1)
+	cv2.imshow(WINNAME, skimage.color.label2rgb(segmentation, firstrgb))
+	cv2.waitKey(0)
+
 	# FIXME: Account for occlusion of pieces
 	visible_white_pieces = heatmaps.get_board_heatmap(piece_heatmaps, white_pieces_board)
 	visible_black_pieces = heatmaps.get_board_heatmap(piece_heatmaps, black_pieces_board)
@@ -121,11 +176,11 @@ def main():
 	#cv2.imshow(WINNAME, visible_dark_squares.as_numpy())
 	#cv2.waitKey(0)
 
-	class_numpy = [heatmap.as_numpy() for heatmap in [visible_light_squares, visible_dark_squares, visible_white_pieces, visible_black_pieces]]
-	heatmaps.show_visible_composite(numpy.stack(class_numpy, axis=2), 0)
-	for heatmap in [visible_white_pieces, visible_black_pieces, visible_light_squares, visible_dark_squares]:
-		cv2.imshow(WINNAME, numpy.tile(numpy.expand_dims(heatmap.as_numpy(), axis=-1), (3,)) * firstrgb / 255)
-		cv2.waitKey(0)
+	#class_numpy = [heatmap.as_numpy() for heatmap in [visible_light_squares, visible_dark_squares, visible_white_pieces, visible_black_pieces]]
+	#heatmaps.show_visible_composite(numpy.stack(class_numpy, axis=2), 0)
+	#for heatmap in [visible_white_pieces, visible_black_pieces, visible_light_squares, visible_dark_squares]:
+	#	cv2.imshow(WINNAME, numpy.tile(numpy.expand_dims(heatmap.as_numpy(), axis=-1), (3,)) * firstrgb / 255)
+	#	cv2.waitKey(0)
 	color_classifier = sklearn.naive_bayes.GaussianNB()
 	class_heatmaps = [visible_light_squares, visible_dark_squares, visible_white_pieces, visible_black_pieces]
 	class_pixels = [firstlab[class_heatmap.slice].reshape(-1, firstlab.shape[-1]) for class_heatmap in class_heatmaps]
