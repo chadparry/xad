@@ -72,7 +72,7 @@ def get_square_center(projection, square):
 
 
 def main():
-	#cap = cv2.VideoCapture('idaho.webm')
+	cap = cv2.VideoCapture('idaho.webm')
 	#cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
 	# Game from https://www.youtube.com/watch?v=jOU3tmXgB8A
 	#cap = cv2.VideoCapture('acerook.mp4')
@@ -84,8 +84,8 @@ def main():
 	#cap = cv2.VideoCapture('Zaven Adriasian - Luke McShane, Italian game, Blitz chess.mp4')
 	#cap.set(cv2.CAP_PROP_POS_MSEC, 105000)
 	# Game from https://www.youtube.com/watch?v=fot9b08TuWc
-	cap = cv2.VideoCapture('Carlsen-Karjakin, World Blitz Championship 2012.mp4')
-	cap.set(cv2.CAP_PROP_POS_MSEC, 11000)
+	#cap = cv2.VideoCapture('Carlsen-Karjakin, World Blitz Championship 2012.mp4')
+	#cap.set(cv2.CAP_PROP_POS_MSEC, 11000)
 
 	ret, firstrgb = cap.read()
 	#cv2.imshow(WINNAME, firstrgb)
@@ -99,13 +99,12 @@ def main():
 	#	if key == ord(' '):
 	#		break
 
-	# FIXME
-	#corners = findboard.find_chessboard_corners(firstrgb)
-	#projection = findboard.get_projection(corners, firstrgb.shape)
-	projection = pose.Projection(cameraIntrinsics=pose.CameraIntrinsics(cameraMatrix=numpy.array([[1.60091387e+03, 0.00000000e+00, 6.39500000e+02], [0.00000000e+00, 1.60091387e+03, 3.59500000e+02], [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]), distCoeffs=numpy.array([[0.], [0.], [0.], [0.], [0.]])), pose=pose.Pose(rvec=numpy.array([[ 1.68565304], [-1.07984874], [ 0.79226459]]), tvec=numpy.array([[ 2.72539522], [ 6.02566887], [26.47004221]])))
+	corners = findboard.find_chessboard_corners(firstrgb)
+	projection = findboard.get_projection(corners, firstrgb.shape)
+	#projection = pose.Projection(cameraIntrinsics=pose.CameraIntrinsics(cameraMatrix=numpy.array([[1.60091387e+03, 0.00000000e+00, 6.39500000e+02], [0.00000000e+00, 1.60091387e+03, 3.59500000e+02], [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]), distCoeffs=numpy.array([[0.], [0.], [0.], [0.], [0.]])), pose=pose.Pose(rvec=numpy.array([[ 1.68565304], [-1.07984874], [ 0.79226459]]), tvec=numpy.array([[ 2.72539522], [ 6.02566887], [26.47004221]])))
 
-	#cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
-	#ret, firstrgb = cap.read()
+	cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
+	ret, firstrgb = cap.read()
 
 	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
 	frame_size = tuple(reversed(firstlab.shape[:-1]))
@@ -132,14 +131,14 @@ def main():
 	kernel = numpy.ones((10, 10), numpy.float32)
 	blurred = cv2.filter2D(firstrgb, -1, kernel / kernel.sum())
 	cv2.imshow(WINNAME, blurred)
-	cv2.waitKey(0)
+	cv2.waitKey(1000)
 	elevation_map = numpy.linalg.norm([
 		skimage.filters.sobel(blurred[:,:,0]),
 		skimage.filters.sobel(blurred[:,:,1]),
 		skimage.filters.sobel(blurred[:,:,2]),
 	], axis=0)
 	cv2.imshow(WINNAME, elevation_map)
-	cv2.waitKey(0)
+	cv2.waitKey(1000)
 	markers = numpy.zeros((elevation_map.shape[0], elevation_map.shape[1]), dtype=numpy.uint8)
 	for (marker_coord, marker_label) in marker_coords:
 		matrix_index = (int(round(d)) for d in reversed(marker_coord))
@@ -147,11 +146,15 @@ def main():
 	segmentation = skimage.morphology.watershed(elevation_map, markers)
 	#segmentation = ndi.binary_fill_holes(segmentation - 1)
 	cv2.imshow(WINNAME, skimage.color.label2rgb(segmentation, firstrgb))
-	cv2.waitKey(0)
+	cv2.waitKey(1000)
 
 	# FIXME: Account for occlusion of pieces
-	visible_white_pieces = heatmaps.get_board_heatmap(piece_heatmaps, white_pieces_board)
-	visible_black_pieces = heatmaps.get_board_heatmap(piece_heatmaps, black_pieces_board)
+	#visible_white_pieces = heatmaps.get_board_heatmap(piece_heatmaps, white_pieces_board)
+	#visible_black_pieces = heatmaps.get_board_heatmap(piece_heatmaps, black_pieces_board)
+	visible_white_pieces = heatmaps.Heatmap(numpy.zeros_like(segmentation, dtype=numpy.float32))
+	visible_white_pieces.delegate[segmentation == 3] = 1
+	visible_black_pieces = heatmaps.Heatmap(numpy.zeros_like(segmentation, dtype=numpy.float32))
+	visible_black_pieces.delegate[segmentation == 4] = 1
 
 	first_lightness = firstlab[:,:,0]
 	white_average = numpy.average(first_lightness[visible_white_pieces.slice], weights=visible_white_pieces.delegate)
