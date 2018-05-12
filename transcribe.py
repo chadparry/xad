@@ -43,7 +43,7 @@ def get_board_key(board):
 
 
 def main():
-	#cap = cv2.VideoCapture('idaho.webm')
+	cap = cv2.VideoCapture('idaho.webm')
 	#cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
 	# Game from https://www.youtube.com/watch?v=jOU3tmXgB8A
 	#cap = cv2.VideoCapture('acerook.mp4')
@@ -55,8 +55,8 @@ def main():
 	#cap = cv2.VideoCapture('Zaven Adriasian - Luke McShane, Italian game, Blitz chess.mp4')
 	#cap.set(cv2.CAP_PROP_POS_MSEC, 105000)
 	# Game from https://www.youtube.com/watch?v=fot9b08TuWc
-	cap = cv2.VideoCapture('Carlsen-Karjakin, World Blitz Championship 2012.mp4')
-	cap.set(cv2.CAP_PROP_POS_MSEC, 11000)
+	#cap = cv2.VideoCapture('Carlsen-Karjakin, World Blitz Championship 2012.mp4')
+	#cap.set(cv2.CAP_PROP_POS_MSEC, 11000)
 
 	ret, firstrgb = cap.read()
 	#cv2.imshow(WINNAME, firstrgb)
@@ -70,13 +70,12 @@ def main():
 	#	if key == ord(' '):
 	#		break
 
-	# FIXME
-	#corners = findboard.find_chessboard_corners(firstrgb)
-	#projection = findboard.get_projection(corners, firstrgb.shape)
-	projection = pose.Projection(cameraIntrinsics=pose.CameraIntrinsics(cameraMatrix=numpy.array([[1.60091387e+03, 0.00000000e+00, 6.39500000e+02], [0.00000000e+00, 1.60091387e+03, 3.59500000e+02], [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]), distCoeffs=numpy.array([[0.], [0.], [0.], [0.], [0.]])), pose=pose.Pose(rvec=numpy.array([[ 1.68565304], [-1.07984874], [ 0.79226459]]), tvec=numpy.array([[ 2.72539522], [ 6.02566887], [26.47004221]])))
+	corners = findboard.find_chessboard_corners(firstrgb)
+	projection = findboard.get_projection(corners, firstrgb.shape)
+	#projection = pose.Projection(cameraIntrinsics=pose.CameraIntrinsics(cameraMatrix=numpy.array([[1.60091387e+03, 0.00000000e+00, 6.39500000e+02], [0.00000000e+00, 1.60091387e+03, 3.59500000e+02], [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]), distCoeffs=numpy.array([[0.], [0.], [0.], [0.], [0.]])), pose=pose.Pose(rvec=numpy.array([[ 1.68565304], [-1.07984874], [ 0.79226459]]), tvec=numpy.array([[ 2.72539522], [ 6.02566887], [26.47004221]])))
 
-	#cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
-	#ret, firstrgb = cap.read()
+	cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
+	ret, firstrgb = cap.read()
 
 	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
 	frame_size = tuple(reversed(firstlab.shape[:-1]))
@@ -122,10 +121,10 @@ def main():
 	#cv2.waitKey(0)
 
 	class_numpy = [heatmap.as_numpy() for heatmap in [visible_light_squares, visible_dark_squares, visible_white_pieces, visible_black_pieces]]
-	heatmaps.show_visible_composite(numpy.stack(class_numpy, axis=2), 0)
+	heatmaps.show_visible_composite(numpy.stack(class_numpy, axis=2), 1000)
 	for heatmap in [visible_white_pieces, visible_black_pieces, visible_light_squares, visible_dark_squares]:
 		cv2.imshow(WINNAME, numpy.tile(numpy.expand_dims(heatmap.as_numpy(), axis=-1), (3,)) * firstrgb / 255)
-		cv2.waitKey(0)
+		cv2.waitKey(1000)
 	color_classifier = sklearn.naive_bayes.GaussianNB()
 	class_heatmaps = [visible_light_squares, visible_dark_squares, visible_white_pieces, visible_black_pieces]
 	class_pixels = [firstlab[class_heatmap.slice].reshape(-1, firstlab.shape[-1]) for class_heatmap in class_heatmaps]
