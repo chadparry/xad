@@ -17,10 +17,13 @@ import sklearn.linear_model
 import sys
 import traceback
 
-import pose
-
 
 WINNAME = 'Chess Transcription'
+
+
+Projection = collections.namedtuple('Projection', ['cameraIntrinsics', 'pose'])
+CameraIntrinsics = collections.namedtuple('CameraIntrinsics', ['cameraMatrix', 'distCoeffs'])
+Pose = collections.namedtuple('Pose', ['rvec', 'tvec'])
 
 
 def grouper(iterable, n):
@@ -33,7 +36,11 @@ def main():
 
 	cv2.namedWindow(WINNAME)
 
-	#webcam = cv2.VideoCapture(0)
+	cap = cv2.VideoCapture(0)
+	ret, alden = cap.read()
+	cv2.imshow(WINNAME, alden)
+	key = cv2.waitKey(0)
+
 	#webcam = cv2.VideoCapture('/usr/local/src/CVChess/data/videos/1.mov')
 	webcam = cv2.VideoCapture('idaho.webm')
 	if not webcam.isOpened():
@@ -61,6 +68,29 @@ def main():
 	corners = find_chessboard_corners(color2)
 	projection = get_projection(corners, color2.shape)
 
+	pimg = numpy.copy(color2)
+	homog = numpy.dot(projection.cameraIntrinsics.cameraMatrix, numpy.dot(numpy.concatenate([cv2.Rodrigues(projection.pose.rvec)[0][:,:2], projection.pose.tvec], axis=1), numpy.array([[8./640., 0., 0.], [0., 8./480., 0.], [0., 0., 1.]])))
+	pose2 = numpy.dot(projection.cameraIntrinsics.cameraMatrix, numpy.concatenate([cv2.Rodrigues(projection.pose.rvec)[0], projection.pose.tvec], axis=1))
+	print('rotation', pose2)
+	print('project 0', numpy.dot(pose2, numpy.array([0., 0., 0., 1.]).reshape(4,1)))
+	print('project 8', numpy.dot(pose2, numpy.array([8., 8., 0., 1.]).reshape(4,1)))
+
+
+	warped = cv2.warpPerspective(alden, homog, (pimg.shape[1], pimg.shape[0]))
+	flatmask = numpy.full(alden.shape, 255, dtype=numpy.uint8)
+	warpedmask = cv2.warpPerspective(flatmask, homog, (color2.shape[1], color2.shape[0]))
+	maskidx = (warpedmask!=0)
+	#overlay = numpy.copy(pimg)
+	#pimg[maskidx] = warped[maskidx]
+
+	#cv2.imshow(WINNAME, pimg)
+	#key = cv2.waitKey(0)
+	#return
+
+
+
+
+
 	chess_grid = numpy.array([[[float(x), float(y), 0.] for y in range(9) for x in range(9)]])
 	project_grid_points_result, j = cv2.projectPoints(chess_grid, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
 	project_grid_points = project_grid_points_result.reshape(9, 9, 2)
@@ -75,8 +105,8 @@ def main():
 	cv2.fillPoly(pimg, square, (255, 255, 255))
 	for y in range(8):
 		for x in range(8):
-			is_light = bool((x + y) % 2)
-			if is_light:
+			is_dark = bool((x + y) % 2)
+			if not is_dark:
 				continue
 			square = numpy.int32([[
 				project_grid_points[y][x],
@@ -92,6 +122,13 @@ def main():
 		cv2.line(pimg, tuple(imgpts[0].ravel()), tuple(pt.ravel()), (0,255,0), 2)
 
 
+	pimg[maskidx] = warped[maskidx]
+
+	#cv2.imshow(WINNAME, pimg)
+	#key = cv2.waitKey(0)
+	#return
+
+
 	square_size_mm = 57.15
 	king_height = 95. / square_size_mm
 	queen_height = 85. / square_size_mm
@@ -100,7 +137,7 @@ def main():
 	rook_height = 55. / square_size_mm
 	pawn_height = 50. / square_size_mm
 
-	pieces_coord = numpy.array([[float(x) + 0.5, 0.5, float(z)] for x in range(0, 8) for z in [0., queen_height]])
+	pieces_coord = numpy.array([[0.5, float(y) + 0.5, float(z)] for y in range(0, 8) for z in [0., queen_height]])
 	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
 	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
 
@@ -109,7 +146,7 @@ def main():
 		top = project_grid_points[pidx][1]
 		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (255,192,192), 15)
 
-	pieces_coord = numpy.array([[float(x) + 0.5, 1.5, float(z)] for x in range(0, 8) for z in [0., pawn_height]])
+	pieces_coord = numpy.array([[1.5, float(y) + 0.5, float(z)] for y in range(0, 8) for z in [0., pawn_height]])
 	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
 	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
 
@@ -119,7 +156,7 @@ def main():
 		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (255,192,192), 15)
 
 
-	pieces_coord = numpy.array([[float(x) + 0.5, 7.5, float(z)] for x in range(0, 8) for z in [0., queen_height]])
+	pieces_coord = numpy.array([[7.5, float(y) + 0.5, float(z)] for y in range(0, 8) for z in [0., queen_height]])
 	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
 	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
 
@@ -128,7 +165,7 @@ def main():
 		top = project_grid_points[pidx][1]
 		cv2.line(pimg, tuple(base.astype('int32')), tuple(top.astype('int32')), (128,0,0), 15)
 
-	pieces_coord = numpy.array([[float(x) + 0.5, 6.5, float(z)] for x in range(0, 8) for z in [0., pawn_height]])
+	pieces_coord = numpy.array([[6.5, float(y) + 0.5, float(z)] for y in range(0, 8) for z in [0., pawn_height]])
 	project_grid_points_result, j = cv2.projectPoints(pieces_coord, projection.pose.rvec, projection.pose.tvec, projection.cameraIntrinsics.cameraMatrix, projection.cameraIntrinsics.distCoeffs)
 	project_grid_points = project_grid_points_result.reshape(8, 2, 2)
 
@@ -142,23 +179,6 @@ def main():
 	key = cv2.waitKey(0)
 
 
-def flip_sides(projection):
-	rotation, jacobian = cv2.Rodrigues(projection.pose.rvec)
-	orig_pose = numpy.vstack([numpy.hstack([rotation, projection.pose.tvec]), numpy.float32([0, 0, 0, 1])])
-	flip2d = cv2.getRotationMatrix2D((4, 4), 180, 1)
-	spin = numpy.vstack([numpy.hstack([flip2d[:,:2], numpy.float32([0, 0]).reshape(2,1), flip2d[:,2:]]), numpy.float32([[0, 0, 1, 0], [0, 0, 0, 1]])])
-	spin_pose = numpy.dot(orig_pose, spin)
-	spin_rotation = spin_pose[:3,:3]
-	spin_tvec = spin_pose[:3,3:]
-	spin_rvec, jacobian = cv2.Rodrigues(spin_rotation)
-	return pose.Projection(cameraIntrinsics=projection.cameraIntrinsics, pose=pose.Pose(spin_rvec, spin_tvec))
-
-
-# TODO:
-# Find the vanishing point of each quad
-# Project them onto a Gaussian sphere
-# Use sklearn.cluster.DBSCAN to find two dense clusters
-# Those quads count as the inliers to find the chessboard
 def find_chessboard_corners(image):
 	color1 = numpy.copy(image)
 	color2 = numpy.copy(image)
@@ -275,10 +295,7 @@ def find_chessboard_corners(image):
 	# FIXME: Discard any RANSAC sample sets where the furthest points are more than 9 units apart.
 	class ChessboardPerspectiveEstimator(sklearn.base.BaseEstimator, sklearn.base.RegressorMixin):
 		def __init__(self, tol=math.pi/36000., shape=(1,1), seed=None):
-			#self.set_params(tol=tol, shape=shape, seed=seed)
-			self.tol = tol
-			self.shape = shape
-			self.seed = seed
+			self.set_params(tol=tol, shape=shape, seed=seed)
 			self.vps = None
 		def segment_alignment_error(self, segment, vp, debug=False):
 			# FIXME: Isn't the angle the same even if the coordinates are unsorted?
@@ -531,7 +548,7 @@ def find_chessboard_corners(image):
 		max(0.5, 1 - visible_squares_estimate / float(len(target_pts))))))
 	while retries > 0:
 		regressor = sklearn.linear_model.RANSACRegressor(
-			estimator=ChessboardPerspectiveEstimator(tol=math.pi/360., shape=color3.shape),
+			base_estimator=ChessboardPerspectiveEstimator(tol=math.pi/360., shape=color3.shape),
 			min_samples=3,
 			# residual_metric was deprecated in favor of loss
 			#residual_metric=lambda dy: numpy.sum(dy**2, axis=1),
@@ -541,12 +558,9 @@ def find_chessboard_corners(image):
 			#residual_threshold=threshold,
 			max_trials=retries,
 		)
-		#regressor.get_params()['estimator'].set_params(tol=math.pi/360., shape=color3.shape)
+		#regressor.get_params()['base_estimator'].set_params(tol=math.pi/360., shape=color3.shape)
 		try:
 			regressor.fit(target_pts, training_pts)
-			#if regressor.estimator_.vps is None or numpy.abs(regressor.estimator_.vps).max() >= sys.maxsize:
-			#	print('Degenerate result', regressor.estimator_.vps)
-			#	raise ValueError('Degenerate result')
 			break
 		except ValueError as e:
 			#print('Failed regression', e)
@@ -568,24 +582,20 @@ def find_chessboard_corners(image):
 	# FIXME: Use itertools.compress
 	inlier_quads = [quad for (quad, mask) in zip(quads + quads_rot, regressor.inlier_mask_) if mask]
 	#print('vps', tuple(vp1), tuple(vp2))
-	#print('SHAPE', color3.shape)
 	#print('quads', inlier_quads)
 	try:
 		cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
-		if numpy.abs(vp1).max() < 1e6:
-			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+		cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
 		#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
 		#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-		if numpy.abs(vp2).max() < 1e6:
-			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+		cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 		#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
 		#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-		if numpy.abs((vp1, vp2)).max() < 1e6:
-			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
-			for quad in inlier_quads:
-				for point in quad:
-					for vp in [vp1, vp2]:
-						cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
+		cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
+		for quad in inlier_quads:
+			for point in quad:
+				for vp in [vp1, vp2]:
+					cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
 	except OverflowError:
 		pass
 
@@ -614,7 +624,6 @@ def find_chessboard_corners(image):
 	training_pts = [(0,) for i in range(len(inlier_quads))]
 	estimator.fit(target_pts, training_pts)
 	(vp1, vp2) = estimator.vps
-	# FIXME: Make this a consistent scaling operation, and also apply it to the vp size check above
 
 	try:
 		working = numpy.copy(color3)
@@ -623,21 +632,17 @@ def find_chessboard_corners(image):
 		#inlier_quads = [quad for (quad, mask) in zip(inlier_quads, regressor.inlier_mask_) if mask]
 		#print('quads', len(inlier_quads))
 		cv2.drawContours(working, numpy.array([numpy.array([(int(numpy.clip(x, 0, img1.shape[1]-1)), int(numpy.clip(y, 0, img1.shape[0]-1))) for (x,y) in quad]) for quad in inlier_quads]), -1, 255, 2)
-		# FIXME
-		if numpy.abs(vp1).max() < 1e6:
-			cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+		cv2.circle(working, tuple(int(p) for p in vp1), 5, (0, 255, 0))
 		#cv2.line(working, left_center, tuple(int(p) for p in vp1), (0,0,255), 2)
 		#cv2.line(working, right_center, tuple(int(p) for p in vp1), (0,0,255), 2)
-		if numpy.abs(vp2).max() < 1e6:
-			cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+		cv2.circle(working, tuple(int(p) for p in vp2), 5, (0, 255, 0))
 		#cv2.line(working, left_center, tuple(int(p) for p in vp2), (0,0,255), 2)
 		#cv2.line(working, right_center, tuple(int(p) for p in vp2), (0,0,255), 2)
-		if numpy.abs((vp1, vp2)).max() < 1e6:
-			cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
-			for quad in inlier_quads:
-				for point in quad:
-					for vp in [vp1, vp2]:
-						cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
+		cv2.line(working, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
+		for quad in inlier_quads:
+			for point in quad:
+				for vp in [vp1, vp2]:
+					cv2.line(working, tuple(int(d) for d in point), tuple(int(d) for d in vp), (0,0,255), 1)
 	except OverflowError:
 		pass
 	cv2.imshow(WINNAME, working)
@@ -756,12 +761,9 @@ def find_chessboard_corners(image):
 		cv2.drawContours(bg, [quadpts], -1, (0, 0, 255), 1)
 
 	try:
-		if numpy.abs(vp1).max() < 1e6:
-			cv2.circle(bg, tuple(int(p) for p in vp1), 5, (0, 255, 0))
-		if numpy.abs(vp2).max() < 1e6:
-			cv2.circle(bg, tuple(int(p) for p in vp2), 5, (0, 255, 0))
-		if numpy.abs((vp1, vp2)).max() < 1e6:
-			cv2.line(bg, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
+		cv2.circle(bg, tuple(int(p) for p in vp1), 5, (0, 255, 0))
+		cv2.circle(bg, tuple(int(p) for p in vp2), 5, (0, 255, 0))
+		cv2.line(bg, tuple(int(p) for p in vp1), tuple(int(p) for p in vp2), (0,255,0), 2)
 	except OverflowError:
 		pass
 	#cv2.imshow(WINNAME, bg)
@@ -880,8 +882,8 @@ def find_chessboard_corners(image):
 	is_offset_all_snapped_quads = (bool((
 		# Check whether the first corner is offset from an even grid point
 		quad[0][0] + quad[0][1] +
-		# Check whether the quad is known to be a light square
-		int(is_light) +
+		# Check whether the quad is known to be offset from a light square
+		int(not is_light) +
 		# Check whether the first segment is offset from a vertical side
 		quad[1][0] - quad[0][0]
 		) % 2)
@@ -1070,24 +1072,9 @@ def get_projection(corners, shape):
 	default_mtx = numpy.array([[fx, 0, (w - 1)/2.], [0, fy, (h - 1)/2.], [0, 0, 1]]).astype('float32')
 
 	best_corners_input = corners.reshape(1, 81, 2).astype('float32')
-	rotated_grid = numpy.float32([[[float(x), float(y), 0.] for x in range(9) for y in range(9)]])
-	err, cameraMatrix, distCoeffs, rvecs, tvecs = cv2.calibrateCamera(
-		rotated_grid,
-		best_corners_input,
-		(shape[1], shape[0]),
-		default_mtx,
-		numpy.zeros(5).astype('float32'),
-		flags=(
-			cv2.CALIB_USE_INTRINSIC_GUESS +
-			cv2.CALIB_FIX_PRINCIPAL_POINT +
-			cv2.CALIB_FIX_ASPECT_RATIO +
-			cv2.CALIB_ZERO_TANGENT_DIST +
-			cv2.CALIB_FIX_K1 +
-			cv2.CALIB_FIX_K2 +
-			cv2.CALIB_FIX_K3
-		)
-	)
-	return pose.Projection(pose.CameraIntrinsics(cameraMatrix=cameraMatrix, distCoeffs=distCoeffs), pose.Pose(rvec=rvecs[0], tvec=tvecs[0]))
+	rotated_grid = numpy.array([[[float(x), float(y), 0.] for x in range(8, -1, -1) for y in range(8, -1, -1)]])
+	err, cameraMatrix, distCoeffs, rvecs, tvecs = cv2.calibrateCamera(rotated_grid.astype('float32'), best_corners_input, (shape[1], shape[0]), default_mtx, numpy.zeros(5).astype('float32'), flags=(cv2.CALIB_USE_INTRINSIC_GUESS + cv2.CALIB_FIX_PRINCIPAL_POINT + cv2.CALIB_FIX_ASPECT_RATIO))
+	return Projection(CameraIntrinsics(cameraMatrix=cameraMatrix, distCoeffs=distCoeffs), Pose(rvec=rvecs[0], tvec=tvecs[0]))
 
 
 def get_edge_likelihood(point, corners, corner_orientation):
@@ -1704,7 +1691,7 @@ def get_best_intersection_by_angle5_quads(quads, tol=math.pi/36000.):
 	is_first = True
 	for idx, quad in enumerate(quads):
 		#print('hypotheses', len(hypotheses), '{}/{}'.format(idx, len(quads)))
-		if len(hypotheses) > 10 and False:
+		if len(hypotheses) > 10:
 			working = numpy.copy(color_global)
 			for hypothesis in hypotheses:
 				#print('hypothesis err', hypothesis[0][0], hypothesis[1][0])

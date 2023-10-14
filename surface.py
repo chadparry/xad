@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import cv2
-import ModernGL
+import moderngl
 import numpy
 import scipy.stats
 
@@ -21,19 +21,19 @@ def get_dark_square_heatmap(frame_size, projection):
 
 
 def get_square_heatmap(frame_size, projection, is_offset):
-	ctx = ModernGL.create_standalone_context()
+	ctx = moderngl.create_standalone_context()
 
 	weights = numpy.fromiter(
 		(scipy.stats.norm.cdf((weight_idx / EDGE_RESOLUTION) * EDGE_GAUSSIAN_SCALE)
 			for weight_idx in range(EDGE_RESOLUTION - 1, -1, -1)),
 		dtype=numpy.float32).reshape((1, EDGE_RESOLUTION))
 	weights_size = tuple(reversed(weights.shape))
-	texture = ctx.texture(weights_size, 1, weights, floats=True)
+	texture = ctx.texture(weights_size, 1, weights, dtype='f4')
 	texture.repeat_x = False
 	texture.use()
 
-	prog = ctx.program([
-		ctx.vertex_shader('''
+	prog = ctx.program(
+		vertex_shader='''
 			#version 330
 
 			uniform mat4 projection;
@@ -46,8 +46,8 @@ def get_square_heatmap(frame_size, projection, is_offset):
 				gl_Position = projection * homog_coord;
 				tex_coord = board_coord;
 			}
-		'''),
-		ctx.fragment_shader('''
+		''',
+		fragment_shader='''
 			#version 330
 
 			uniform sampler2D weights;
@@ -67,8 +67,8 @@ def get_square_heatmap(frame_size, projection, is_offset):
 				get_axis_weight(tex_coord.y, weights, ver_weight);
 				color = hor_weight * ver_weight;
 			}
-		'''),
-	])
+		''',
+	)
 
 	fbo = ctx.framebuffer(ctx.renderbuffer(frame_size, components=1))
 	fbo.use()
@@ -93,7 +93,9 @@ def get_square_heatmap(frame_size, projection, is_offset):
 		for square in squares
 	])
 	vbo = ctx.buffer(triangles)
-	vao = ctx.simple_vertex_array(prog, vbo, ['board_coord'])
+	# moderngl changed the signature
+	#vao = ctx.simple_vertex_array(prog, vbo, ['board_coord'])
+	vao = ctx.vertex_array(prog, [(vbo, '2f', 'board_coord')])
 
 	(rotation, jacobian) = cv2.Rodrigues(projection.pose.rvec)
 	projection_matrix = numpy.dot(
@@ -117,12 +119,12 @@ def get_square_heatmap(frame_size, projection, is_offset):
 		numpy.zeros(4, dtype=numpy.float32),
 		scaled_matrix[2:],
 	])
-	prog.uniforms['projection'].write(gl_projection.transpose())
+	prog['projection'].write(gl_projection.transpose().copy(order='C'))
 
 	ctx.clear()
 	vao.render()
 
-	data = fbo.read(components=1, floats=True)
+	data = fbo.read(components=1, dtype='f4')
 	projection_shape = tuple(reversed(frame_size))
 	heatmap = numpy.frombuffer(data, dtype=numpy.float32).reshape(projection_shape)
 	return heatmaps.Heatmap(heatmap).as_sparse()

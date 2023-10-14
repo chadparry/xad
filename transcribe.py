@@ -35,6 +35,8 @@ def get_board_key(board):
 def main():
 	#cap = cv2.VideoCapture('idaho.webm')
 	#cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
+	#cap = cv2.VideoCapture('dining.webm')
+	#cap.set(cv2.CAP_PROP_POS_MSEC, 40)
 	# Game from https://www.youtube.com/watch?v=jOU3tmXgB8A
 	#cap = cv2.VideoCapture('acerook.mp4')
 	#cap.set(cv2.CAP_PROP_POS_MSEC, 7000)
@@ -45,30 +47,33 @@ def main():
 	#cap = cv2.VideoCapture('Zaven Adriasian - Luke McShane, Italian game, Blitz chess.mp4')
 	#cap.set(cv2.CAP_PROP_POS_MSEC, 105000)
 	# Game from https://www.youtube.com/watch?v=fot9b08TuWc
-	cap = cv2.VideoCapture('Carlsen-Karjakin, World Blitz Championship 2012.mp4')
-	cap.set(cv2.CAP_PROP_POS_MSEC, 11000)
+	#cap = cv2.VideoCapture('Carlsen-Karjakin, World Blitz Championship 2012.mp4')
+	#cap.set(cv2.CAP_PROP_POS_MSEC, 11000)
+	cap = cv2.VideoCapture('GM Hikaru LAUGHS At New Hustler\'s IM Warning! GM Hikaru vs Pete [6hFCfRq1tVc].webm')
+	cap.set(cv2.CAP_PROP_POS_MSEC, 7000)
 
-	ret, firstrgb = cap.read()
-	#cv2.imshow(WINNAME, firstrgb)
-	#cv2.waitKey(0)
+	ret, firstbgr = cap.read()
+	cv2.imshow(WINNAME, firstbgr)
+	cv2.waitKey(1)
 	#while True:
-	#	ret, firstrgb = cap.read()
-	#	if firstrgb is None:
+	#	ret, firstbgr = cap.read()
+	#	if firstbgr is None:
 	#		return
-	#	cv2.imshow(WINNAME, firstrgb)
+	#	cv2.imshow(WINNAME, firstbgr)
 	#	key = cv2.waitKey(1000 // 30) & 0xff
 	#	if key == ord(' '):
 	#		break
 
 	# FIXME
-	#corners = findboard.find_chessboard_corners(firstrgb)
-	#projection = findboard.get_projection(corners, firstrgb.shape)
-	projection = pose.Projection(cameraIntrinsics=pose.CameraIntrinsics(cameraMatrix=numpy.array([[1.60091387e+03, 0.00000000e+00, 6.39500000e+02], [0.00000000e+00, 1.60091387e+03, 3.59500000e+02], [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]), distCoeffs=numpy.array([[0.], [0.], [0.], [0.], [0.]])), pose=pose.Pose(rvec=numpy.array([[ 1.68565304], [-1.07984874], [ 0.79226459]]), tvec=numpy.array([[ 2.72539522], [ 6.02566887], [26.47004221]])))
+	#corners = findboard.find_chessboard_corners(firstbgr)
+	#projection = findboard.get_projection(corners, firstbgr.shape)
+	projection = pose.Projection(cameraIntrinsics=pose.CameraIntrinsics(cameraMatrix=numpy.array([[1.86451431e+03, 0.00000000e+00, 9.59500000e+02], [0.00000000e+00, 1.86451431e+03, 5.39500000e+02], [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]), distCoeffs=numpy.array([[0.],        [0.],        [0.],        [0.],        [0.]])), pose=pose.Pose(rvec=numpy.array([[ 1.46354967],        [ 1.49479278],        [-1.11067136]]), tvec=numpy.array([[-3.49307017],        [ 4.2543103 ],        [31.74298106]])))
 
-	#cap.set(cv2.CAP_PROP_POS_MSEC, 52000)
-	#ret, firstrgb = cap.read()
+	cap.set(cv2.CAP_PROP_POS_MSEC, 24000)
+	ret, firstbgr = cap.read()
 
-	firstlab = cv2.cvtColor(firstrgb, cv2.COLOR_BGR2LAB)
+	firstlab = cv2.cvtColor(firstbgr, cv2.COLOR_BGR2LAB)
+
 	frame_size = tuple(reversed(firstlab.shape[:-1]))
 	projection_shape = tuple(reversed(frame_size))
 
@@ -100,15 +105,17 @@ def main():
 		(visible_white_pieces, visible_black_pieces) = (visible_black_pieces, visible_white_pieces)
 
 	starting_pieces = heatmaps.get_board_heatmap(piece_heatmaps, first_board)
-	#cv2.imshow(WINNAME, starting_pieces.as_numpy())
-	#cv2.waitKey(0)
+	cv2.imshow(WINNAME, starting_pieces.as_numpy())
+	cv2.waitKey(500)
 	light_squares = surface.get_light_square_heatmap(frame_size, projection)
 	visible_light_squares = heatmaps.Heatmap.blend([light_squares, starting_pieces]).subtract(starting_pieces)
 	#cv2.imshow(WINNAME, visible_light_squares.as_numpy())
+	#cv2.imshow(WINNAME, visible_light_squares.as_dense().delegate)
 	#cv2.waitKey(0)
 	dark_squares = surface.get_dark_square_heatmap(frame_size, projection)
 	visible_dark_squares = heatmaps.Heatmap.blend([dark_squares, starting_pieces]).subtract(starting_pieces)
 	#cv2.imshow(WINNAME, visible_dark_squares.as_numpy())
+	#cv2.imshow(WINNAME, visible_dark_squares.as_dense().delegate)
 	#cv2.waitKey(0)
 
 	color_classifier = sklearn.naive_bayes.GaussianNB()
@@ -151,12 +158,14 @@ def main():
 		#pos = cap.get(cv2.CAP_PROP_POS_MSEC)
 		#cap.set(cv2.CAP_PROP_POS_MSEC, pos + 100)
 
-		ret, framergb = cap.read()
-		if framergb is None:
+		ret, framebgr = cap.read()
+		if framebgr is None:
 			break
-		cv2.imshow(WINNAME, framergb)
-		cv2.waitKey(1)
-		framelab = cv2.cvtColor(framergb, cv2.COLOR_BGR2LAB)
+		#cv2.imshow(WINNAME, framebgr)
+		#cv2.waitKey(100)
+		framelab = cv2.cvtColor(framebgr, cv2.COLOR_BGR2LAB)
+		#cv2.imshow(WINNAME, framelab)
+		#cv2.waitKey(0)
 
 		history.appendleft(framelab)
 		if len(history) > HISTORY_LEN:
@@ -164,9 +173,9 @@ def main():
 
 		stable_mask = subtractor.get_stable_mask(history)
 
-		#display_mask = cv2.bitwise_and(framergb, stable_mask)
-		#cv2.imshow(WINNAME, display_mask)
-		#cv2.waitKey(1)
+		display_mask = cv2.bitwise_and(framebgr,  numpy.delete(stable_mask, 3, 2))
+		cv2.imshow(WINNAME, display_mask)
+		cv2.waitKey(100)
 
 		# TODO: Only classify the relevant sections of the image
 		frame_classes = color_classifier.predict_proba(framelab.reshape(-1, framelab.shape[-1])).reshape(tuple(framelab.shape[:-1]) + (4,))
@@ -188,9 +197,16 @@ def main():
 			stable_diff = numpy.choose(stable_mask, [numpy.zeros_like(frame_diff), frame_diff], mode='clip')
 			#stable_diff = frame_diff
 			#stable_diff[stable_mask] = 0
+			#cv2.imshow(WINNAME, particle.stablelab)
+			#particle_stable_bgr = cv2.cvtColor(framebgr, cv2.COLOR_LAB2BGR)
+			#cv2.imshow(WINNAME, particle_stable_bgr)
+			#cv2.waitKey(500)
+			#particle_stable_bgr = cv2.cvtColor(particle.stablelab, cv2.COLOR_LAB2BGR)
+			#cv2.imshow(WINNAME, particle_stable_bgr)
+			#cv2.waitKey(100)
 
 			#cv2.imshow(WINNAME, stable_diff)
-			#key = cv2.waitKey(1) & 0xff
+			#key = cv2.waitKey(500) & 0xff
 			#advance_move = key == ord(' ')
 			#print('*', key, '*', advance_move)
 
@@ -225,7 +241,7 @@ def main():
 
 			weight = particle.weight * (best_normalized_score + 1 - EXPECTED_CORRELATION)
 			if best_score < MIN_CORRELATION or weight < threshold_weight:
-				#print('  rejected candidate', weight, best_move)
+				print('  rejected candidate', weight, best_move)
 				continue
 
 			#newstable_classes = cv2.bitwise_and(frame_classes, stable_mask)
@@ -255,7 +271,7 @@ def main():
 
 			#if advance_move:
 			if weight > max_weight:
-				composite = numpy.zeros(framergb.shape, dtype=numpy.float32)
+				composite = numpy.zeros(framebgr.shape, dtype=numpy.float32)
 				composite[:,:,0] += best_move_diff[:,:,0] + best_move_diff[:,:,1]
 				composite[:,:,1] += centered_subtractor[:,:,2] + centered_subtractor[:,:,3]
 				composite[:,:,2] += best_move_diff[:,:,2] + best_move_diff[:,:,3]
@@ -279,7 +295,7 @@ def main():
 					(1, 1, 1),
 				)
 				cv2.imshow(WINNAME, composite)
-				cv2.waitKey(500)
+				cv2.waitKey(5000)
 			#advance_move = False
 
 		# Resample by removing low-weighted particles

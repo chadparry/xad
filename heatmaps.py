@@ -6,7 +6,7 @@ import cv2
 import functools
 import itertools
 import math
-import ModernGL
+import moderngl
 import numpy
 import operator
 
@@ -173,17 +173,17 @@ def get_piece_heatmaps(frame_size, voxel_resolution, projection):
 	piece_voxels = voxels.get_piece_voxels(*voxel_resolution)
 
 	# This helper performs volume ray casting
-	ctx = ModernGL.create_standalone_context()
+	ctx = moderngl.create_standalone_context()
 
 	voxels_size = tuple(reversed(piece_voxels.shape))
-	texture = ctx.texture3d(voxels_size, 1, piece_voxels, floats=True)
+	texture = ctx.texture3d(voxels_size, 1, piece_voxels, dtype='f4')
 	texture.repeat_x = False
 	texture.repeat_y = False
 	texture.repeat_z = False
 	texture.use()
 
-	prog = ctx.program([
-		ctx.vertex_shader('''
+	prog = ctx.program(
+		vertex_shader='''
 			#version 330
 
 			in vec2 canvas_coord;
@@ -193,8 +193,8 @@ def get_piece_heatmaps(frame_size, voxel_resolution, projection):
 				gl_Position = vec4(canvas_coord, 0, 1);
 				tex_coord = canvas_coord;
 			}
-		'''),
-		ctx.fragment_shader('''
+		''',
+		fragment_shader='''
 			#version 330
 
 			struct OptionalFloat {
@@ -296,15 +296,17 @@ def get_piece_heatmaps(frame_size, voxel_resolution, projection):
 
 				color = 1 - transparency;
 			}
-		'''),
-	])
+		''',
+	)
 
 	fbo = ctx.framebuffer(ctx.renderbuffer(frame_size, components=1))
 	fbo.use()
 
 	triangle_slice_vertices = numpy.float32([(-1, -1), (-1, 1), (1, -1), (1, 1)])
 	vbo = ctx.buffer(triangle_slice_vertices)
-	vao = ctx.simple_vertex_array(prog, vbo, ['canvas_coord'])
+	# moderngl changed the signature
+	#vao = ctx.simple_vertex_array(prog, vbo, ['canvas_coord'])
+	vao = ctx.vertex_array(prog, [(vbo, '2f', 'canvas_coord')])
 
 	projection_shape = tuple(reversed(frame_size))
 
@@ -331,16 +333,17 @@ def get_piece_heatmaps(frame_size, voxel_resolution, projection):
 		piece_inv_projection = numpy.dot(piece_inv_pose, ext_inv_camera_matrix)
 		camera_position = numpy.dot(piece_inv_pose, numpy.float32([0, 0, 0, 1]).reshape(4,1))
 
-		prog.uniforms['inv_projection'].write(piece_inv_projection[:3].transpose())
-		prog.uniforms['camera_position'].write(camera_position[:3])
-		prog.uniforms['piece_dimensions'].write(numpy.float32([1, 1, height]))
+		# FIXME: Can this copy be avoided?
+		prog['inv_projection'].write(piece_inv_projection[:3].transpose().copy(order='C'))
+		prog['camera_position'].write(camera_position[:3])
+		prog['piece_dimensions'].write(numpy.float32([1, 1, height]))
 
 		ctx.clear()
 		# TODO: It would be possible to speed this up by shrinking the frame
 		# until it barely contains the bounding box
-		vao.render(ModernGL.TRIANGLE_STRIP)
+		vao.render(moderngl.TRIANGLE_STRIP)
 
-		data = fbo.read(components=1, floats=True)
+		data = fbo.read(components=1, dtype='f4')
 		heatmap = numpy.frombuffer(data, dtype=numpy.float32).reshape(projection_shape)
 
 		# TODO: Optimize the raycaster so it only creates the relevant part of the heatmap
