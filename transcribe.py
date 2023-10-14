@@ -137,12 +137,12 @@ def main():
 	#cv2.imshow(WINNAME, classified_composite)
 	#cv2.waitKey(0)
 
-	composite_memo = {(): numpy.stack([
+	composite_memo = {(): heatmaps.Heatmap(numpy.stack([
 		light_squares.as_numpy(),
 		dark_squares.as_numpy(),
 		heatmaps.Heatmap.blank(projection_shape).as_numpy(),
 		heatmaps.Heatmap.blank(projection_shape).as_numpy(),
-	], axis=-1)}
+	], axis=-1)).as_sparse()}
 	first_move_diffs = heatmaps.get_move_diffs(piece_heatmaps, reference_heatmap, depths, composite_memo, first_board)
 	#first_move_diffs = {chess.Move(chess.E2, chess.E4): first_move_diffs[chess.Move(chess.E2, chess.E4)]}
 
@@ -153,8 +153,17 @@ def main():
 	max_weight = first_weight
 
 	history = collections.deque([firstlab] * HISTORY_LEN)
+	# FIXME: Keep track of the best weight for each ply. Only keep the one best game history, where each particle is a prefix of that game history.
 	while True:
-		print('memory', len(particles), sum(len(particle.diffs) for particle in particles.values()), sum(move_diff.size for particle in particles.values() for move_diff in particle.diffs.values()))
+
+		# Reduce memory usage by clearing the memo frequently
+		composite_memo = {(): heatmaps.Heatmap(numpy.stack([
+			light_squares.as_numpy(),
+			dark_squares.as_numpy(),
+			heatmaps.Heatmap.blank(projection_shape).as_numpy(),
+			heatmaps.Heatmap.blank(projection_shape).as_numpy(),
+		], axis=-1)).as_sparse()}
+
 		#pos = cap.get(cv2.CAP_PROP_POS_MSEC)
 		#cap.set(cv2.CAP_PROP_POS_MSEC, pos + 100)
 
@@ -189,6 +198,7 @@ def main():
 
 		# FIXME: The particles are being updated inside this loop
 		# Instead, create a separate collection for the next generation of particles
+		# FIXME: Run particles and piece candidates in parallel threads
 		for particle in list(particles.values()):
 			if not particle.diffs:
 				continue
@@ -215,13 +225,12 @@ def main():
 			#stable_diff_masked = heatmaps.Heatmap.product_zeros([reference_heatmap, stable_diff_heatmap])
 			stable_diff_masked = stable_diff * reference_heatmap_numpy
 
-			centered_subtractor = stable_diff_masked - numpy.expand_dims(reference_heatmap.reweight(stable_diff_masked.sum()).as_numpy(), axis=-1)
-
-			#cv2.imshow(WINNAME, (centered_subtractor[:,:,2] - centered_subtractor[:,:,2].min()) / (centered_subtractor[:,:,2].max() - centered_subtractor[:,:,2].min()))
-			#key = cv2.waitKey(0)
+			centered_subtractor = heatmaps.Heatmap(stable_diff_masked - numpy.expand_dims(reference_heatmap.reweight(stable_diff_masked.sum()).as_numpy(), axis=-1))
+			#cv2.imshow(WINNAME, (centered_subtractor.delegate[:,:,2] - centered_subtractor.delegate[:,:,2].min()) / (centered_subtractor.delegate[:,:,2].max() - centered_subtractor.delegate[:,:,2].min()))
+			#key = cv2.waitKey(1000)
 
 			# The Pearson correlation coefficient measures the goodness of fit
-			scores = ((move, move_diff, (move_diff * centered_subtractor).sum())
+			scores = ((move, move_diff, move_diff.correlation(centered_subtractor))
 				for (move, move_diff) in particle.diffs.items())
 			# Each particle represents a hypothesis for which frame contains the next move
 			# Particles don't need to represent multiple alternative moves associated with a single frame,
@@ -229,11 +238,11 @@ def main():
 			best_move_item = max(scores, key=lambda item: item[2])
 			(best_move, best_move_diff, best_score) = best_move_item
 
-			subtractor_total_variance = (centered_subtractor**2).sum()
+			subtractor_total_variance = centered_subtractor.total_variance()
 			if subtractor_total_variance:
-				subtractor_denom = math.sqrt(subtractor_total_variance * centered_subtractor.size)
+				subtractor_denom = math.sqrt(subtractor_total_variance * centered_subtractor.size())
 			else:
-				subtractor_denom = centered_subtractor.size
+				subtractor_denom = centered_subtractor.size()
 			best_normalized_score = best_score / subtractor_denom
 
 			#cv2.imshow(WINNAME, (best_move_diff[:,:,2] - best_move_diff[:,:,2].min()) / (best_move_diff[:,:,2].max() - best_move_diff[:,:,2].min()))
@@ -241,7 +250,7 @@ def main():
 
 			weight = particle.weight * (best_normalized_score + 1 - EXPECTED_CORRELATION)
 			if best_score < MIN_CORRELATION or weight < threshold_weight:
-				print('  rejected candidate', weight, best_move)
+				#print('  rejected candidate', weight, best_move)
 				continue
 
 			#newstable_classes = cv2.bitwise_and(frame_classes, stable_mask)
@@ -270,11 +279,16 @@ def main():
 			#	print('    accepted candidate', best_normalized_score, chess.Board().variation_san(next_board.move_stack))
 
 			#if advance_move:
-			if weight > max_weight:
+			if weight > max_weight or True:
 				composite = numpy.zeros(framebgr.shape, dtype=numpy.float32)
-				composite[:,:,0] += best_move_diff[:,:,0] + best_move_diff[:,:,1]
-				composite[:,:,1] += centered_subtractor[:,:,2] + centered_subtractor[:,:,3]
-				composite[:,:,2] += best_move_diff[:,:,2] + best_move_diff[:,:,3]
+
+				composite[:,:,0] += best_move_diff.as_numpy()[:,:,0] + best_move_diff.as_numpy()[:,:,1]
+				composite[:,:,1] += centered_subtractor.as_numpy()[:,:,2] + centered_subtractor.as_numpy()[:,:,3]
+				composite[:,:,2] += best_move_diff.as_numpy()[:,:,2] + best_move_diff.as_numpy()[:,:,3]
+
+				#composite[:,:,2][best_move_diff.slice] += best_move_diff.delegate
+				#composite[:,:,1][centered_subtractor.slice] += centered_subtractor.delegate * (centered_subtractor.size() / subtractor_denom)
+
 				for channel in range(3):
 					composite[:,:,channel] -= composite[:,:,channel].min()
 					composite[:,:,channel] /= composite[:,:,channel].max()

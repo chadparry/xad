@@ -24,14 +24,15 @@ class Heatmap:
 	def __init__(self, delegate, init_slice=None, shape=None):
 		self.delegate = delegate
 		self.shape = self.delegate.shape if shape is None else shape
+		# FIXME: Several disjoint slices should be supported, for each piece's start and finish
 		self.slice = numpy.s_[0:self.shape[0],0:self.shape[1]] if init_slice is None else init_slice
 
 	def as_sparse(self):
-		(y_coords, x_coords) = numpy.where(self.delegate)
-		y_start = y_coords.min()
-		y_stop = y_coords.max() + 1
-		x_start = x_coords.min()
-		x_stop = x_coords.max() + 1
+		(y_coords, x_coords) = numpy.where(self.delegate)[:2]
+		y_start = y_coords.min() if y_coords.size else 0
+		y_stop = y_coords.max() + 1 if y_coords.size else 0
+		x_start = x_coords.min() if x_coords.size else 0
+		x_stop = x_coords.max() + 1 if x_coords.size else 0
 		sparse_delegate = self.delegate[y_start:y_stop,x_start:x_stop]
 		(y_offset, x_offset) = (s.start for s in self.slice)
 		sparser_slice = numpy.s_[y_start+y_offset:y_stop+y_offset,x_start+x_offset:x_stop+x_offset]
@@ -87,7 +88,8 @@ class Heatmap:
 		x_start = min(piece.slice[1].start for piece in nonempty_pieces)
 		x_stop = max(piece.slice[1].stop for piece in nonempty_pieces)
 		max_shape = max(piece.shape for piece in nonempty_pieces)
-		return ((y_stop - y_start, x_stop - x_start),
+		max_channels = max(piece.shape[2:] for piece in nonempty_pieces)
+		return ((y_stop - y_start, x_stop - x_start) + max_channels,
 			[numpy.s_[piece.slice[0].start-y_start:piece.slice[0].stop-y_start,piece.slice[1].start-x_start:piece.slice[1].stop-x_start]
 				for piece in pieces],
 			numpy.s_[y_start:y_stop,x_start:x_stop],
@@ -304,8 +306,6 @@ def get_piece_heatmaps(frame_size, voxel_resolution, projection):
 
 	triangle_slice_vertices = numpy.float32([(-1, -1), (-1, 1), (1, -1), (1, 1)])
 	vbo = ctx.buffer(triangle_slice_vertices)
-	# moderngl changed the signature
-	#vao = ctx.simple_vertex_array(prog, vbo, ['canvas_coord'])
 	vao = ctx.vertex_array(prog, [(vbo, '2f', 'canvas_coord')])
 
 	projection_shape = tuple(reversed(frame_size))
@@ -441,12 +441,13 @@ def get_piece_diff(negative_composite_memo, heatmaps, occlusions, stable_pieces,
 
 
 def multichannel_blend(background_channels, foreground_heatmap, foreground_color):
+	# FIXME: This converts the sparse heatmeaps to dense when it should blend them sparsely
 	foreground_numpy = foreground_heatmap.as_numpy()
 	negative_heatmap = 1 - foreground_numpy
-	blended_channels = background_channels * numpy.expand_dims(negative_heatmap, axis=-1)
+	blended_channels = background_channels.as_numpy() * numpy.expand_dims(negative_heatmap, axis=-1)
 	foreground_idx = { chess.WHITE: 2, chess.BLACK: 3 }[foreground_color]
 	blended_channels[:,:,foreground_idx] += foreground_numpy
-	return blended_channels
+	return Heatmap(blended_channels).as_sparse()
 
 
 def draw_pieces(heatmaps, composite_memo, sorted_pieces):
@@ -461,10 +462,14 @@ def draw_pieces(heatmaps, composite_memo, sorted_pieces):
 	drawing = multichannel_blend(drawing_tail, piece_heatmap, head_piece.color)
 
 	composite_memo[key] = drawing
+	#print('memoized', len(composite_memo), drawing.delegate.shape)
+	#cv2.imshow('Chess Transcription Pieces', drawing.delegate[:,:,1:])
+	#cv2.waitKey(1)
 	return drawing
 
 
 def draw_board(heatmaps, depths, composite_memo, board):
+	# FIXME: Filter out all the pieces that can't possibly intersect with the candidate move
 	pieces = board.piece_map().items()
 	sorted_pieces = sorted(pieces, key=lambda piece_item: depths[piece_item[0]])
 	return draw_pieces(heatmaps, composite_memo, sorted_pieces)
@@ -472,23 +477,15 @@ def draw_board(heatmaps, depths, composite_memo, board):
 
 def get_move_diffs(heatmaps, reference_heatmap, depths, composite_memo, board):
 	move_diffs = {}
+	heatmaps_before = draw_board(heatmaps, depths, composite_memo, board)
 	for move in board.legal_moves:
-		heatmaps_before = draw_board(heatmaps, depths, composite_memo, board)
 		board.push(move)
 		try:
 			heatmaps_after = draw_board(heatmaps, depths, composite_memo, board)
 		finally:
 			board.pop()
-		move_diff = heatmaps_after - heatmaps_before
-
-		# TODO: The move_diff should be made sparse
-
-		diff_stdev =  move_diff.std()
-		if diff_stdev:
-			normalized_diff = move_diff / diff_stdev
-		else:
-			normalized_diff = move_diff
-
+		move_diff = heatmaps_after.subtract(heatmaps_before).as_sparse()
+		normalized_diff =  move_diff.normalize_stdev()
 		move_diffs[move] = normalized_diff
 	return move_diffs
 

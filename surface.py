@@ -93,8 +93,6 @@ def get_square_heatmap(frame_size, projection, is_offset):
 		for square in squares
 	])
 	vbo = ctx.buffer(triangles)
-	# moderngl changed the signature
-	#vao = ctx.simple_vertex_array(prog, vbo, ['board_coord'])
 	vao = ctx.vertex_array(prog, [(vbo, '2f', 'board_coord')])
 
 	(rotation, jacobian) = cv2.Rodrigues(projection.pose.rvec)
