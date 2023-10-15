@@ -130,6 +130,13 @@ class Heatmap:
 		combined = numpy.prod(broadcasts, axis=0)
 		return Heatmap(combined, combined_slice, combined_shape)
 
+	def clip(self, bounds):
+		if bounds is None:
+			return self
+		dummy_heatmap = Heatmap(None, bounds, self.shape)
+		(_, (index, _), clipped_slice, clipped_shape) = Heatmap.intersection([self, dummy_heatmap])
+		return Heatmap(self.delegate[index], clipped_slice, clipped_shape)
+
 	def subtract(self, other):
 		(broadcast_shape, (index_self, index_other), combined_slice, combined_shape) = Heatmap.union([self, other])
 		combined = numpy.zeros(broadcast_shape, dtype=numpy.float32)
@@ -441,6 +448,8 @@ def get_piece_diff(negative_composite_memo, heatmaps, occlusions, stable_pieces,
 
 
 def multichannel_blend(background_channels, foreground_heatmap, foreground_color):
+	if not foreground_heatmap.delegate.size:
+		return background_channels
 	# FIXME: This converts the sparse heatmeaps to dense when it should blend them sparsely
 	foreground_numpy = foreground_heatmap.as_numpy()
 	negative_heatmap = 1 - foreground_numpy
@@ -450,41 +459,49 @@ def multichannel_blend(background_channels, foreground_heatmap, foreground_color
 	return Heatmap(blended_channels).as_sparse()
 
 
-def draw_pieces(heatmaps, composite_memo, sorted_pieces):
+def draw_pieces(heatmaps, composite_memo, sorted_pieces, bounds=None):
 	key = tuple(sorted_pieces)
 	if key in composite_memo:
-		return composite_memo[key]
+		return composite_memo[key].clip(bounds)
 
 	(sorted_pieces_tail, (head_square, head_piece)) = (sorted_pieces[:-1], sorted_pieces[-1])
 
-	drawing_tail = draw_pieces(heatmaps, composite_memo, sorted_pieces_tail)
+	drawing_tail = draw_pieces(heatmaps, composite_memo, sorted_pieces_tail, bounds)
 	piece_heatmap = heatmaps[(head_square, head_piece.piece_type)]
-	drawing = multichannel_blend(drawing_tail, piece_heatmap, head_piece.color)
+	clipped_piece_heatmap = piece_heatmap.clip(bounds)
+	drawing = multichannel_blend(drawing_tail, clipped_piece_heatmap, head_piece.color)
 
-	composite_memo[key] = drawing
+	# FIXME: Memoization doesn't currently work because the clipping area is different each time. Maybe just remove it.
+	#composite_memo[key] = drawing
 	#print('memoized', len(composite_memo), drawing.delegate.shape)
 	#cv2.imshow('Chess Transcription Pieces', drawing.delegate[:,:,1:])
 	#cv2.waitKey(1)
 	return drawing
 
 
-def draw_board(heatmaps, depths, composite_memo, board):
-	# FIXME: Filter out all the pieces that can't possibly intersect with the candidate move
-	pieces = board.piece_map().items()
+def draw_board(heatmaps, depths, composite_memo, pieces, bounds=None):
 	sorted_pieces = sorted(pieces, key=lambda piece_item: depths[piece_item[0]])
-	return draw_pieces(heatmaps, composite_memo, sorted_pieces)
+	return draw_pieces(heatmaps, composite_memo, sorted_pieces, bounds)
 
 
 def get_move_diffs(heatmaps, reference_heatmap, depths, composite_memo, board):
 	move_diffs = {}
-	heatmaps_before = draw_board(heatmaps, depths, composite_memo, board)
+	pieces_before = board.piece_map().items()
+	heatmaps_before = draw_board(heatmaps, depths, composite_memo, pieces_before)
 	for move in board.legal_moves:
 		board.push(move)
 		try:
-			heatmaps_after = draw_board(heatmaps, depths, composite_memo, board)
+			pieces_after = board.piece_map().items()
 		finally:
 			board.pop()
-		move_diff = heatmaps_after.subtract(heatmaps_before).as_sparse()
+
+		moved_piece_items = pieces_before ^ pieces_after
+		moved_pieces = frozenset([(square, piece.piece_type) for (square, piece) in moved_piece_items])
+		(_, _, moved_piece_bounds, _) = Heatmap.union([heatmaps[piece] for piece in moved_pieces])
+		heatmaps_after = draw_board(heatmaps, depths, composite_memo, pieces_after, moved_piece_bounds)
+
+		clipped_heatmaps_before = heatmaps_before.clip(moved_piece_bounds)
+		move_diff = heatmaps_after.subtract(clipped_heatmaps_before)
 		normalized_diff =  move_diff.normalize_stdev()
 		move_diffs[move] = normalized_diff
 	return move_diffs

@@ -154,6 +154,7 @@ def main():
 
 	history = collections.deque([firstlab] * HISTORY_LEN)
 	# FIXME: Keep track of the best weight for each ply. Only keep the one best game history, where each particle is a prefix of that game history.
+	best_weights = [first_weight]
 	while True:
 
 		# Reduce memory usage by clearing the memo frequently
@@ -252,6 +253,10 @@ def main():
 			if best_score < MIN_CORRELATION or weight < threshold_weight:
 				#print('  rejected candidate', weight, best_move)
 				continue
+			# Keep only the best particle for each ply
+			if len(best_weights) > particle.board.ply() and best_weights[particle.board.ply()] >= weight:
+				continue
+			best_weights = best_weights[:particle.board.ply() + 1] + [weight]
 
 			#newstable_classes = cv2.bitwise_and(frame_classes, stable_mask)
 			#invmask = cv2.bitwise_not(stable_mask)
@@ -279,7 +284,7 @@ def main():
 			#	print('    accepted candidate', best_normalized_score, chess.Board().variation_san(next_board.move_stack))
 
 			#if advance_move:
-			if weight > max_weight or True:
+			if weight > max_weight:
 				composite = numpy.zeros(framebgr.shape, dtype=numpy.float32)
 
 				composite[:,:,0] += best_move_diff.as_numpy()[:,:,0] + best_move_diff.as_numpy()[:,:,1]
@@ -310,6 +315,7 @@ def main():
 				)
 				cv2.imshow(WINNAME, composite)
 				cv2.waitKey(5000)
+
 			#advance_move = False
 
 		# Resample by removing low-weighted particles
@@ -318,6 +324,8 @@ def main():
 		#print('threshold_weight', threshold_weight)
 		particles = {key: particle for (key, particle) in particles.items() if particle.weight >= threshold_weight}
 		#print('composite_memo', len(composite_memo))
+		# Also keep only the best particle for each game length
+		particles = {key: particle for (key, particle) in particles.items() if len(best_weights) > particle.board.ply() and particle.weight >= best_weights[particle.board.ply()]}
 		print('particles:', len(particles), ', diffs:', sum(len(particle.diffs) for particle in particles.values()),
 			#', unique diffs:', len(set(hashlib.sha224(numpy.ascontiguousarray(diff.as_numpy())).hexdigest() for particle in particles.values() for diff in particle.diffs.values())),
 		)
