@@ -93,7 +93,7 @@ def main():
 	visible_white_pieces = heatmaps.get_board_heatmap(piece_heatmaps, white_pieces_board)
 	visible_black_pieces = heatmaps.get_board_heatmap(piece_heatmaps, black_pieces_board)
 
-	first_lightness = firstlab[:,:,0]
+	first_lightness = firstlab[...,0]
 	white_average = numpy.average(first_lightness[visible_white_pieces.slice], weights=visible_white_pieces.delegate)
 	black_average = numpy.average(first_lightness[visible_black_pieces.slice], weights=visible_black_pieces.delegate)
 
@@ -130,9 +130,9 @@ def main():
 
 	first_classes = color_classifier.predict_proba(firstlab.reshape(-1, firstlab.shape[-1])).reshape(tuple(firstlab.shape[:2]) + (4,))
 	#classified_composite = numpy.stack([
-	#	first_classes[:,:,0],
-	#	first_classes[:,:,1] + first_classes[:,:,2],
-	#	first_classes[:,:,3] + first_classes[:,:,2],
+	#	first_classes[...,0],
+	#	first_classes[...,1] + first_classes[...,2],
+	#	first_classes[...,3] + first_classes[...,2],
 	#], axis=2)
 	#cv2.imshow(WINNAME, classified_composite)
 	#cv2.waitKey(0)
@@ -190,9 +190,9 @@ def main():
 		# TODO: Only classify the relevant sections of the image
 		frame_classes = color_classifier.predict_proba(framelab.reshape(-1, framelab.shape[-1])).reshape(tuple(framelab.shape[:-1]) + (4,))
 		#classified_composite = numpy.stack([
-		#	frame_classes[:,:,0],
-		#	frame_classes[:,:,1] + frame_classes[:,:,2],
-		#	frame_classes[:,:,3] + frame_classes[:,:,2],
+		#	frame_classes[...,0],
+		#	frame_classes[...,1] + frame_classes[...,2],
+		#	frame_classes[...,3] + frame_classes[...,2],
 		#], axis=2)
 		#cv2.imshow(WINNAME, classified_composite)
 		#cv2.waitKey(1)
@@ -227,7 +227,7 @@ def main():
 			stable_diff_masked = stable_diff * reference_heatmap_numpy
 
 			centered_subtractor = heatmaps.Heatmap(stable_diff_masked - numpy.expand_dims(reference_heatmap.reweight(stable_diff_masked.sum()).as_numpy(), axis=-1))
-			#cv2.imshow(WINNAME, (centered_subtractor.delegate[:,:,2] - centered_subtractor.delegate[:,:,2].min()) / (centered_subtractor.delegate[:,:,2].max() - centered_subtractor.delegate[:,:,2].min()))
+			#cv2.imshow(WINNAME, (centered_subtractor.delegate[...,2] - centered_subtractor.delegate[...,2].min()) / (centered_subtractor.delegate[...,2].max() - centered_subtractor.delegate[...,2].min()))
 			#key = cv2.waitKey(1000)
 
 			# The Pearson correlation coefficient measures the goodness of fit
@@ -246,7 +246,7 @@ def main():
 				subtractor_denom = centered_subtractor.size()
 			best_normalized_score = best_score / subtractor_denom
 
-			#cv2.imshow(WINNAME, (best_move_diff[:,:,2] - best_move_diff[:,:,2].min()) / (best_move_diff[:,:,2].max() - best_move_diff[:,:,2].min()))
+			#cv2.imshow(WINNAME, (best_move_diff[...,2] - best_move_diff[...,2].min()) / (best_move_diff[...,2].max() - best_move_diff[...,2].min()))
 			#key = cv2.waitKey(0)
 
 			weight = particle.weight * (best_normalized_score + 1 - EXPECTED_CORRELATION)
@@ -287,16 +287,16 @@ def main():
 			if weight > max_weight:
 				composite = numpy.zeros(framebgr.shape, dtype=numpy.float32)
 
-				composite[:,:,0] += best_move_diff.as_numpy()[:,:,0] + best_move_diff.as_numpy()[:,:,1]
-				composite[:,:,1] += centered_subtractor.as_numpy()[:,:,2] + centered_subtractor.as_numpy()[:,:,3]
-				composite[:,:,2] += best_move_diff.as_numpy()[:,:,2] + best_move_diff.as_numpy()[:,:,3]
+				composite[...,0] += best_move_diff.as_numpy()[...,0] + best_move_diff.as_numpy()[...,1]
+				composite[...,1] += centered_subtractor.as_numpy()[...,2] + centered_subtractor.as_numpy()[...,3]
+				composite[...,2] += best_move_diff.as_numpy()[...,2] + best_move_diff.as_numpy()[...,3]
 
-				#composite[:,:,2][best_move_diff.slice] += best_move_diff.delegate
-				#composite[:,:,1][centered_subtractor.slice] += centered_subtractor.delegate * (centered_subtractor.size() / subtractor_denom)
+				#composite[...,2][best_move_diff.slice] += best_move_diff.delegate
+				#composite[...,1][centered_subtractor.slice] += centered_subtractor.delegate * (centered_subtractor.size() / subtractor_denom)
 
 				for channel in range(3):
-					composite[:,:,channel] -= composite[:,:,channel].min()
-					composite[:,:,channel] /= composite[:,:,channel].max()
+					composite[...,channel] -= composite[...,channel].min()
+					composite[...,channel] /= composite[...,channel].max()
 				cv2.putText(
 					composite,
 					'SCORE: {:.3f}'.format(best_normalized_score),
@@ -314,7 +314,7 @@ def main():
 					(1, 1, 1),
 				)
 				cv2.imshow(WINNAME, composite)
-				cv2.waitKey(5000)
+				cv2.waitKey(1000)
 
 			#advance_move = False
 

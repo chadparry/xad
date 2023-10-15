@@ -137,6 +137,16 @@ class Heatmap:
 		(_, (index, _), clipped_slice, clipped_shape) = Heatmap.intersection([self, dummy_heatmap])
 		return Heatmap(self.delegate[index], clipped_slice, clipped_shape)
 
+	def expand(self, bounds):
+		if bounds is None:
+			return self
+		dummy_heatmap = Heatmap(None, bounds, self.shape)
+		(_, _, expanded_slice, expanded_shape) = Heatmap.union([self, dummy_heatmap])
+		padding = [(slice_axis.start - expanded_slice_axis.start, expanded_slice_axis.stop - slice_axis.stop)
+			for (expanded_slice_axis, slice_axis) in zip(expanded_slice, self.slice)]
+		expanded = numpy.pad(self.delegate, padding + [(0, 0)])
+		return Heatmap(expanded, expanded_slice, expanded_shape)
+
 	def subtract(self, other):
 		(broadcast_shape, (index_self, index_other), combined_slice, combined_shape) = Heatmap.union([self, other])
 		combined = numpy.zeros(broadcast_shape, dtype=numpy.float32)
@@ -448,15 +458,24 @@ def get_piece_diff(negative_composite_memo, heatmaps, occlusions, stable_pieces,
 
 
 def multichannel_blend(background_channels, foreground_heatmap, foreground_color):
-	if not foreground_heatmap.delegate.size:
-		return background_channels
-	# FIXME: This converts the sparse heatmeaps to dense when it should blend them sparsely
-	foreground_numpy = foreground_heatmap.as_numpy()
-	negative_heatmap = 1 - foreground_numpy
-	blended_channels = background_channels.as_numpy() * numpy.expand_dims(negative_heatmap, axis=-1)
+	expanded_background_channels = background_channels.expand(foreground_heatmap.slice)
+	(blended_shape, (background_channel_index, foreground_heatmap_index), combined_slice, combined_shape) = Heatmap.intersection([expanded_background_channels, foreground_heatmap])
+	clipped_background_channels = expanded_background_channels.delegate[background_channel_index]
+	clipped_foreground_heatmap = foreground_heatmap.delegate[foreground_heatmap_index]
+	# FIXME: The heatmaps should start out negated.
+	negative_heatmap = 1 - clipped_foreground_heatmap
 	foreground_idx = { chess.WHITE: 2, chess.BLACK: 3 }[foreground_color]
-	blended_channels[:,:,foreground_idx] += foreground_numpy
-	return Heatmap(blended_channels).as_sparse()
+
+	blended_channels = numpy.stack([
+		1 - ((1 - clipped_background_channels[...,channel]) * negative_heatmap) if foreground_idx == channel else clipped_background_channels[...,channel] * negative_heatmap
+		for channel in range(clipped_background_channels.shape[-1])
+	], axis=2)
+
+	expanded_background_channels.delegate[background_channel_index] = blended_channels
+	#if clipped_background_channels.size:
+	#	cv2.imshow('Chess Transcription Pieces', expanded_background_channels.as_numpy()[...,1:])
+	#	cv2.waitKey(500)
+	return expanded_background_channels
 
 
 def draw_pieces(heatmaps, composite_memo, sorted_pieces, bounds=None):
@@ -474,8 +493,8 @@ def draw_pieces(heatmaps, composite_memo, sorted_pieces, bounds=None):
 	# FIXME: Memoization doesn't currently work because the clipping area is different each time. Maybe just remove it.
 	#composite_memo[key] = drawing
 	#print('memoized', len(composite_memo), drawing.delegate.shape)
-	#cv2.imshow('Chess Transcription Pieces', drawing.delegate[:,:,1:])
-	#cv2.waitKey(1)
+	#cv2.imshow('Chess Transcription Pieces', drawing.delegate[...,1:])
+	#cv2.waitKey(500)
 	return drawing
 
 
@@ -498,6 +517,7 @@ def get_move_diffs(heatmaps, reference_heatmap, depths, composite_memo, board):
 		moved_piece_items = pieces_before ^ pieces_after
 		moved_pieces = frozenset([(square, piece.piece_type) for (square, piece) in moved_piece_items])
 		(_, _, moved_piece_bounds, _) = Heatmap.union([heatmaps[piece] for piece in moved_pieces])
+		# FIXME: Instead of drawing the board from scratch, is it possible to remove an already-drawn piece?
 		heatmaps_after = draw_board(heatmaps, depths, composite_memo, pieces_after, moved_piece_bounds)
 
 		clipped_heatmaps_before = heatmaps_before.clip(moved_piece_bounds)
@@ -542,7 +562,7 @@ def main():
 	projection_shape = tuple(reversed(frame_size))
 	negative_composite_memo = {(): Heatmap.blank(projection_shape)}
 
-	subtractor = cv2.imread('diff.png')[:,:,0]
+	subtractor = cv2.imread('diff.png')[...,0]
 	normalized_subtractor = subtractor / subtractor.stdev()
 
 	move_diffs = get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, board)
@@ -551,8 +571,8 @@ def main():
 		score = (move_diff * normalized_subtractor).mean()
 		print('score', board.san(move), score)
 		composite = numpy.zeros((720, 1280, 3), dtype=numpy.float32)
-		composite[:,:,2] += move_diff
-		composite[:,:,1] += normalized_subtractor
+		composite[...,2] += move_diff
+		composite[...,1] += normalized_subtractor
 		cv2.imshow(WINNAME, composite / 20)
 		key = cv2.waitKey(0)
 
