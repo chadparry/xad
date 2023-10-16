@@ -18,6 +18,7 @@ import voxels
 WINNAME = 'Chess Transcription'
 
 
+# FIXME: This is used for much more than heatmaps now. The module should be called sparse and the class should be called Clip.
 class Heatmap:
 	"""Allows multiplication on a very sparse matrix, more efficient for this case than scipy.sparse"""
 
@@ -39,8 +40,12 @@ class Heatmap:
 		return Heatmap(sparse_delegate, sparser_slice, self.shape)
 
 	def as_numpy(self):
-		dense_delegate = numpy.zeros(self.shape, dtype=numpy.float32)
-		dense_delegate[self.slice] = self.delegate
+		dense_delegate = numpy.zeros(self.shape, dtype=self.delegate.dtype)
+		if len(self.shape) > 2:
+			for channel in range(self.shape[-1]):
+				dense_delegate[...,channel][self.slice] = self.delegate[...,channel]
+		else:
+			dense_delegate[self.slice] = self.delegate
 		return dense_delegate
 
 	def sum(self):
@@ -128,6 +133,15 @@ class Heatmap:
 		(broadcast_shape, indices, combined_slice, combined_shape) = Heatmap.intersection(pieces)
 		broadcasts = [piece.delegate[index] for (piece, index) in zip(pieces, indices)]
 		combined = numpy.prod(broadcasts, axis=0)
+		return Heatmap(combined, combined_slice, combined_shape)
+
+	@staticmethod
+	def superimpose(pieces):
+		"""Superimposes multiple images with no regard for transparency, suitable only for determining areas of overlap"""
+		(broadcast_shape, indices, combined_slice, combined_shape) = Heatmap.union(pieces)
+		combined = numpy.zeros(broadcast_shape, dtype=numpy.float32)
+		for (piece, index) in zip(pieces, indices):
+			combined[index] += piece.delegate
 		return Heatmap(combined, combined_slice, combined_shape)
 
 	def clip(self, bounds):
@@ -503,7 +517,7 @@ def draw_board(heatmaps, depths, composite_memo, pieces, bounds=None):
 	return draw_pieces(heatmaps, composite_memo, sorted_pieces, bounds)
 
 
-def get_move_diffs(heatmaps, reference_heatmap, depths, composite_memo, board):
+def get_move_diffs(heatmaps, depths, composite_memo, board):
 	move_diffs = {}
 	pieces_before = board.piece_map().items()
 	heatmaps_before = draw_board(heatmaps, depths, composite_memo, pieces_before)
@@ -556,7 +570,6 @@ def main():
 	)
 
 	heatmaps = get_piece_heatmaps(frame_size, voxel_resolution, projection)
-	reference_heatmap = get_reference_heatmap(heatmaps)
 	occlusions = get_occlusions(heatmaps, projection)
 	board = chess.Board()
 	projection_shape = tuple(reversed(frame_size))
@@ -565,7 +578,7 @@ def main():
 	subtractor = cv2.imread('diff.png')[...,0]
 	normalized_subtractor = subtractor / subtractor.stdev()
 
-	move_diffs = get_move_diffs(heatmaps, reference_heatmap, occlusions, negative_composite_memo, board)
+	move_diffs = get_move_diffs(heatmaps, occlusions, negative_composite_memo, board)
 	for (move, move_diff) in move_diffs.items():
 		# The Pearson correlation coefficient measures the goodness of fit
 		score = (move_diff * normalized_subtractor).mean()

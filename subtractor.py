@@ -21,8 +21,8 @@ def lab2mag(img):
 
 
 def bin2mask(img):
-	# Change a 1-channel image to a 4-channel image
-	return numpy.tile(numpy.expand_dims(img, axis=-1), (4,))
+	# Change a 1-channel image to a 3-channel image
+	return numpy.tile(numpy.expand_dims(img, axis=-1), (3,))
 
 
 def get_stable_mask(history):
